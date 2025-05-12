@@ -27,6 +27,10 @@ export default function ProfilePage() {
   const [userAddress, setUserAddress] = useState<string | null>(null);
   const [userOfferedRides, setUserOfferedRides] = useState<Ride[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // New state for editing rides
+  const [editingRideId, setEditingRideId] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState<Ride | null>(null);
 
   // State for license UI Mockup
   const [licenseExpiryYear, setLicenseExpiryYear] = useState<string | null>(null);
@@ -92,6 +96,80 @@ export default function ProfilePage() {
     setIsProcessingLicense(false); // Ensure processing is also stopped
     if (fileInputRef.current) {
         fileInputRef.current.value = "";
+    }
+  };
+
+  // Function to handle edit button click
+  const handleEditRide = (ride: Ride) => {
+    setEditingRideId(ride.id);
+    setEditFormData({ ...ride });
+  };
+
+  // Function to handle cancel edit
+  const handleCancelEdit = () => {
+    setEditingRideId(null);
+    setEditFormData(null);
+  };
+
+  // Function to handle form input changes
+  const handleEditFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    if (editFormData) {
+      setEditFormData({
+        ...editFormData,
+        [name]: value
+      });
+    }
+  };
+
+  // Function to save edited ride
+  const handleSaveRide = () => {
+    if (!editFormData) return;
+    
+    try {
+      const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
+      if (storedRides) {
+        const allRides = JSON.parse(storedRides) as Ride[];
+        const updatedRides = allRides.map(ride => 
+          ride.id === editFormData.id ? editFormData : ride
+        );
+        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+        
+        // Update local state
+        setUserOfferedRides(userOfferedRides.map(ride => 
+          ride.id === editFormData.id ? editFormData : ride
+        ));
+        
+        // Exit edit mode
+        setEditingRideId(null);
+        setEditFormData(null);
+      }
+    } catch (error) {
+      console.error("Error saving edited ride:", error);
+      alert("Failed to save ride changes. Please try again.");
+    }
+  };
+
+  // Function to delete a ride
+  const handleDeleteRide = (rideId: string) => {
+    // Confirm deletion
+    if (!window.confirm("Are you sure you want to delete this ride?")) {
+      return;
+    }
+    
+    try {
+      const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
+      if (storedRides) {
+        const allRides = JSON.parse(storedRides) as Ride[];
+        const updatedRides = allRides.filter(ride => ride.id !== rideId);
+        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+        
+        // Update local state
+        setUserOfferedRides(userOfferedRides.filter(ride => ride.id !== rideId));
+      }
+    } catch (error) {
+      console.error("Error deleting ride:", error);
+      alert("Failed to delete ride. Please try again.");
     }
   };
 
@@ -207,23 +285,135 @@ export default function ProfilePage() {
                 <p className="text-gray-600 dark:text-gray-400 text-center py-4">
                   You haven't offered any rides yet. 
                   <Link href="/add-ride" legacyBehavior>
-                    <a className="text-blue-600 hover:underline">Offer a ride now!</a>
+                    <a className="ml-1 text-blue-600 hover:underline">Offer a ride now!</a>
                   </Link>
                 </p>
               ) : (
                 <div className="space-y-6">
                   {userOfferedRides.map(ride => (
                     <div key={ride.id} className="bg-white dark:bg-gray-700/70 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow">
-                      <h4 className="text-lg font-semibold text-blue-700 dark:text-blue-400">From: {ride.origin}</h4>
-                      <h4 className="text-lg font-semibold text-blue-700 dark:text-blue-400">To: {ride.destination} ({ride.university})</h4>
-                      <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 grid grid-cols-2 gap-x-4 gap-y-1">
-                        <p><strong>State:</strong> {ride.state}</p>
-                        <p><strong>Date:</strong> {ride.date}</p>
-                        <p><strong>Time:</strong> {ride.time}</p>
-                        <p><strong>Price:</strong> RM{parseFloat(ride.price).toFixed(2)}</p>
-                        <p><strong>Seats:</strong> {ride.seats}</p>
-                        <p><strong>Ride ID:</strong> <span className="font-mono text-xs">{ride.id.substring(0,8)}...</span></p>
-                      </div>
+                      {editingRideId === ride.id ? (
+                        // Edit Form
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-blue-700 dark:text-blue-400">Edit Ride</h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Origin
+                              </label>
+                              <input
+                                type="text"
+                                name="origin"
+                                value={editFormData?.origin || ''}
+                                onChange={handleEditFormChange}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Destination
+                              </label>
+                              <input
+                                type="text"
+                                name="destination"
+                                value={editFormData?.destination || ''}
+                                onChange={handleEditFormChange}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Date
+                              </label>
+                              <input
+                                type="date"
+                                name="date"
+                                value={editFormData?.date || ''}
+                                onChange={handleEditFormChange}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Time
+                              </label>
+                              <input
+                                type="time"
+                                name="time"
+                                value={editFormData?.time || ''}
+                                onChange={handleEditFormChange}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Price (RM)
+                              </label>
+                              <input
+                                type="number"
+                                name="price"
+                                value={editFormData?.price || ''}
+                                onChange={handleEditFormChange}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Seats
+                              </label>
+                              <input
+                                type="number"
+                                name="seats"
+                                value={editFormData?.seats || ''}
+                                onChange={handleEditFormChange}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end space-x-3 mt-4">
+                            <button
+                              onClick={handleCancelEdit}
+                              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleSaveRide}
+                              className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+                            >
+                              Save Changes
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // Ride display
+                        <>
+                          <h4 className="text-lg font-semibold text-blue-700 dark:text-blue-400">From: {ride.origin}</h4>
+                          <h4 className="text-lg font-semibold text-blue-700 dark:text-blue-400">To: {ride.destination} ({ride.university})</h4>
+                          <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 grid grid-cols-2 gap-x-4 gap-y-1">
+                            <p><strong>State:</strong> {ride.state}</p>
+                            <p><strong>Date:</strong> {ride.date}</p>
+                            <p><strong>Time:</strong> {ride.time}</p>
+                            <p><strong>Price:</strong> RM{parseFloat(ride.price).toFixed(2)}</p>
+                            <p><strong>Seats:</strong> {ride.seats}</p>
+                            <p><strong>Ride ID:</strong> <span className="font-mono text-xs">{ride.id.substring(0,8)}...</span></p>
+                          </div>
+                          <div className="mt-4 flex justify-end space-x-3">
+                            <button
+                              onClick={() => handleEditRide(ride)}
+                              className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteRide(ride.id)}
+                              className="px-3 py-1.5 border border-transparent rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
