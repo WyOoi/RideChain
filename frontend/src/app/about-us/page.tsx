@@ -82,6 +82,10 @@ export default function AboutUs() {
                 </a>
               </Link>
             </div>
+
+            <p className="mt-4 text-lg text-gray-600 dark:text-gray-300">
+              We&apos;re a team of passionate students and developers dedicated to making campus commuting easier, cheaper, and more sustainable for everyone.
+            </p>
           </div>
         </div>
       </div>

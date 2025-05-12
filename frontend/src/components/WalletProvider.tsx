@@ -31,10 +31,11 @@ const WalletProviderComponent = dynamic(
       // so that only the wallets you configure are bundled
       const wallets = useMemo(
         () => [
-          new PhantomWalletAdapter(),
-          new SolflareWalletAdapter(),
+          // Add desired wallets here
+          // new PhantomWalletAdapter(),
+          // new SolflareWalletAdapter({ network }),
         ],
-        [network]
+        [] // Removed unnecessary network dependency
       );
 
       return (

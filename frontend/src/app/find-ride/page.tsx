@@ -11,6 +11,9 @@ import {
     Transaction,
     SendTransactionError
 } from '@solana/web3.js';
+import { PaymentLock } from '../components/PaymentLock';
+import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
+import { IDL } from '../../idl/contract';
 
 // Data for states and universities (from test2 template, duplicated for now)
 const malaysianStates = [
@@ -89,7 +92,7 @@ const allUniversities = [
 // Ride type (duplicated for now)
 interface Ride {
   id: string;
-  type: 'offer' | 'request'; // Added type field
+  type: 'offer' | 'request';
   origin: string;
   destination: string;
   state: string;
@@ -99,6 +102,7 @@ interface Ride {
   price: string;
   seats: string;
   driver: string;
+  paymentStatus?: 'pending' | 'locked' | 'released';
 }
 
 interface Message {
@@ -139,8 +143,16 @@ export default function FindRidePage() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [activePaymentRideId, setActivePaymentRideId] = useState<string | null>(null);
 
-  const { publicKey, sendTransaction } = useWallet();
+  // Add new state for payment locking
+  const [isPaymentLocked, setIsPaymentLocked] = useState(false);
+  const [showPaymentLock, setShowPaymentLock] = useState(false);
+
+  const { publicKey, sendTransaction, wallet } = useWallet();
   const { connection } = useConnection();
+
+  const [paymentLoadingRideId, setPaymentLoadingRideId] = useState<string | null>(null);
+  const [paymentErrorRideId, setPaymentErrorRideId] = useState<string | null>(null);
+  const [paymentErrorMessage, setPaymentErrorMessage] = useState<string | null>(null);
 
   // Load rides from localStorage on component mount
   useEffect(() => {
@@ -167,7 +179,7 @@ export default function FindRidePage() {
       setFilteredRides([]);
       // localStorage.removeItem(RIDES_STORAGE_KEY); // Optional: clear corrupted data
     }
-  }, []); // Removed searchPerformed from dependency array to only load once on mount initially
+  }, []); // Keep dependency array empty as intended for initial load
 
   // --- Effects for Carpool Features ---
   useEffect(() => {
@@ -183,16 +195,14 @@ export default function FindRidePage() {
   }, [searchState]);
 
   useEffect(() => {
-    // Initialize filtered rides or update if rides change and no search performed
-    // OR if currentSearchMode changes and no search performed
+    // Initialize filtered rides or update if rides change or mode changes
     if (!searchPerformed) {
-      const modeFilteredRides = rides.filter(ride => 
+      const modeFilteredRides = rides.filter(ride =>
         currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
       );
       setFilteredRides(modeFilteredRides);
     }
-    // If searchPerformed is true, filteredRides is managed by handleRideSearch.
-  }, [rides, searchPerformed, currentSearchMode]); // Added currentSearchMode to dependencies
+  }, [rides, searchPerformed, currentSearchMode]); // Added missing dependencies
 
   // --- Handlers for Carpool Features ---
   const handleRideSearch = (event: React.FormEvent<HTMLFormElement>) => {
@@ -374,6 +384,167 @@ export default function FindRidePage() {
     }
   }, [publicKey, sendTransaction, connection]);
 
+  // Add new function to handle payment locking
+  const handlePaymentLocked = () => {
+    setIsPaymentLocked(true);
+    setShowPaymentLock(false);
+    if (activeChatRide) {
+      const updatedRides = rides.map(ride => 
+        ride.id === activeChatRide.id 
+          ? { ...ride, paymentStatus: 'locked' as const }
+          : ride
+      );
+      setRides(updatedRides);
+      localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+    }
+  };
+
+  const handlePaymentReleased = () => {
+    setIsPaymentLocked(false);
+    if (activeChatRide) {
+      const updatedRides = rides.map(ride => 
+        ride.id === activeChatRide.id 
+          ? { ...ride, paymentStatus: 'released' as const }
+          : ride
+      );
+      setRides(updatedRides);
+      localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+    }
+  };
+
+  async function handleLockOrReleasePayment(ride: Ride) {
+    console.log("Attempting payment action for ride:", ride.id);
+    console.log("Using Program ID:", process.env.NEXT_PUBLIC_PROGRAM_ID);
+    console.log("Driver ID from ride data:", ride.driver);
+    console.log("Connected Wallet Public Key:", publicKey?.toBase58());
+
+    if (!publicKey || !wallet) {
+      console.error("Wallet not connected or wallet object missing.");
+      setPaymentErrorRideId(ride.id);
+      setPaymentErrorMessage('Please connect your wallet first');
+      return;
+    }
+
+    // Validate driver public key before proceeding
+    try {
+      console.log("Validating driver public key:", ride.driver);
+      new web3.PublicKey(ride.driver);
+      console.log("Driver public key is valid.");
+    } catch (e) {
+      console.error("Invalid driver public key:", ride.driver, e);
+      setPaymentErrorRideId(ride.id);
+      setPaymentErrorMessage(`Invalid driver address (${ride.driver ? ride.driver.substring(0, 6) : 'undefined'}...) provided for this ride. Cannot proceed.`);
+      return;
+    }
+
+    // Validate Program ID from environment variable
+    let programIdPublicKey: web3.PublicKey;
+    try {
+      const programIdString = process.env.NEXT_PUBLIC_PROGRAM_ID || '';
+      console.log("Validating Program ID:", programIdString);
+      programIdPublicKey = new web3.PublicKey(programIdString);
+      console.log("Program ID is valid.");
+    } catch (e) {
+      console.error("Invalid Program ID from environment variable:", process.env.NEXT_PUBLIC_PROGRAM_ID, e);
+      setPaymentErrorRideId(ride.id);
+      setPaymentErrorMessage(`Invalid Program ID configured. Please check environment variables.`);
+      return;
+    }
+
+    setPaymentLoadingRideId(ride.id);
+    setPaymentErrorRideId(null);
+    setPaymentErrorMessage(null);
+
+    try {
+      console.log("Setting up Anchor Provider...");
+      const provider = new AnchorProvider(
+        new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
+        wallet as any,
+        { commitment: 'confirmed' }
+      );
+      console.log("Setting up Program instance...");
+      const program = new Program(
+        IDL as any,
+        programIdPublicKey, // Use validated program ID
+        provider
+      );
+      console.log("Finding Ride PDA...");
+      const [ridePda] = web3.PublicKey.findProgramAddressSync(
+        [Buffer.from('ride'), Buffer.from(ride.id)],
+        program.programId
+      );
+      console.log("Ride PDA found:", ridePda.toBase58());
+
+      if (!ride.paymentStatus || ride.paymentStatus === 'pending') {
+        console.log("Attempting to lock payment (initializeRide)...");
+        // Lock payment
+        await program.methods
+          .initializeRide(
+            ride.id,
+            new BN(parseFloat(ride.price) * LAMPORTS_PER_SOL),
+            new web3.PublicKey(ride.driver), // Already validated
+            publicKey
+          )
+          .accounts({
+            ride: ridePda,
+            passenger: publicKey,
+            systemProgram: web3.SystemProgram.programId,
+          })
+          .rpc();
+        console.log("initializeRide successful!");
+        // Update state
+        const updatedRides = rides.map(r =>
+          r.id === ride.id ? { ...r, paymentStatus: 'locked' as const } : r
+        );
+        setRides(updatedRides);
+        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+      } else if (ride.paymentStatus === 'locked') {
+        console.warn("Release payment logic is currently disabled.");
+         // Validate the current user is the driver before allowing release? 
+         // Note: Current contract requires driver to be the signer for release.
+         // The current frontend logic has the passenger signing.
+         // This needs clarification on who triggers release.
+
+        // Release payment
+        // TEMPORARILY COMMENTING OUT RELEASE LOGIC DUE TO SIGNER MISMATCH
+        /*
+        await program.methods
+          .releasePayment()
+          .accounts({
+            ride: ridePda,
+            driver: publicKey, // This is the passenger's key, contract expects driver
+            systemProgram: web3.SystemProgram.programId,
+          })
+          .rpc();
+        // Update state
+        const updatedRides = rides.map(r =>
+          r.id === ride.id ? { ...r, paymentStatus: 'released' as const } : r
+        );
+        setRides(updatedRides);
+        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+        */
+       setPaymentErrorRideId(ride.id);
+       setPaymentErrorMessage("Release functionality currently disabled. Driver must release.");
+      }
+    } catch (err: unknown) {
+      console.error("Payment transaction failed:", err);
+      setPaymentErrorRideId(ride.id);
+      let errorMessage = "An unexpected error occurred.";
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      } else {
+        try {
+          errorMessage = JSON.stringify(err);
+        } catch { /* Ignore stringify error */ }
+      }
+      setPaymentErrorMessage(errorMessage);
+    } finally {
+      setPaymentLoadingRideId(null);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100/60 via-purple-50/70 to-indigo-100/60 dark:from-slate-900 dark:via-gray-800/90 dark:to-slate-900">
       <Navbar />
@@ -535,24 +706,28 @@ export default function FindRidePage() {
                             {ride.type === 'offer' ? 'Chat with Driver' : 'Chat with Requester'}
                         </button>
                         {ride.type === 'offer' && publicKey && (
-                            <button 
-                                onClick={() => handlePayForRide(ride)} 
-                                disabled={isPaying && activePaymentRideId === ride.id}
-                                className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150 ease-in-out">
-                                {(isPaying && activePaymentRideId === ride.id) ? 'Processing...' : 'Pay with SOL'}
+                            <button
+                              onClick={() => handleLockOrReleasePayment(ride)}
+                              disabled={paymentLoadingRideId === ride.id || ride.paymentStatus === 'released'}
+                              className={`py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white 
+                                ${ride.paymentStatus === 'locked' ? 'bg-green-600 hover:bg-green-700' : ride.paymentStatus === 'released' ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'}
+                                disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150 ease-in-out`}
+                            >
+                              {paymentLoadingRideId === ride.id
+                                ? 'Processing...'
+                                : ride.paymentStatus === 'locked'
+                                  ? 'Release Payment'
+                                  : ride.paymentStatus === 'released'
+                                    ? 'Payment Complete'
+                                    : 'Pay with SOL'}
                             </button>
                         )}
                     </div>
                   </div>
                   {/* Payment status feedback for this specific ride card */}
-                  {activePaymentRideId === ride.id && paymentTxSignature && (
-                    <div className="mt-2 text-xs text-green-600 dark:text-green-400 break-all">
-                      Payment Successful! Tx: {paymentTxSignature.substring(0, 20)}...
-                    </div>
-                  )}
-                  {activePaymentRideId === ride.id && paymentError && (
+                  {paymentErrorRideId === ride.id && paymentErrorMessage && (
                     <div className="mt-2 text-xs text-red-600 dark:text-red-400 break-all">
-                      Payment Failed: {paymentError}
+                      Payment Error: {paymentErrorMessage}
                     </div>
                   )}
                 </div>
@@ -610,6 +785,28 @@ export default function FindRidePage() {
                   Send
                 </button>
               </div>
+
+              {/* Payment Lock Component */}
+              {!isPaymentLocked && !showPaymentLock && (
+                <button
+                  onClick={() => setShowPaymentLock(true)}
+                  className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 mb-4"
+                >
+                  Lock Payment
+                </button>
+              )}
+
+              {showPaymentLock && (
+                <div className="mb-4">
+                  <PaymentLock
+                    rideId={activeChatRide.id}
+                    amount={parseFloat(activeChatRide.price)}
+                    driverAddress={activeChatRide.driver}
+                    onPaymentLocked={handlePaymentLocked}
+                    onPaymentReleased={handlePaymentReleased}
+                  />
+                </div>
+              )}
             </div>
           </div>
         )}

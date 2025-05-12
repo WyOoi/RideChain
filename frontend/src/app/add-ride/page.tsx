@@ -3,6 +3,7 @@
 import Navbar from "@/components/Navbar";
 import { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react'; // For identifying the driver
+import Link from 'next/link';
 
 // Data for states and universities (duplicated for now)
 const malaysianStates = [
@@ -306,6 +307,10 @@ export default function AddRidePage() {
                 </div>
             </section>
         )}
+        <p className="mt-4 text-gray-600 dark:text-gray-400 text-center">
+          Need to find a ride instead? Check out the <Link href="/find-ride"><a className="text-blue-600 hover:underline">Find a Ride</a></Link> page.
+          Don&apos;t forget to connect your wallet first!
+        </p>
       </main>
       {/* Duplicating styles for now, consider moving to globals.css */}
       <style jsx global>{`

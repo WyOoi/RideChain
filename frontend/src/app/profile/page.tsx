@@ -4,6 +4,7 @@ import Navbar from "@/components/Navbar";
 import { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import Link from 'next/link'; // For potential future links to ride details
+import Image from 'next/image'; // Import Next.js Image component
 
 // Ride type should be consistent with other pages
 interface Ride {

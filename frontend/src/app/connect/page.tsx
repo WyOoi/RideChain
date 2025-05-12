@@ -15,7 +15,7 @@ export default function Connect() {
               Connect & <span className="text-blue-600 dark:text-blue-400">Coordinate</span>
             </h1>
             <p className="text-lg text-gray-600 dark:text-gray-300">
-              Chat with your ride partner and coordinate the details
+              Let&apos;s Connect!
             </p>
           </div>
 
@@ -106,6 +106,10 @@ export default function Connect() {
               </Link>
             </div>
           </div>
+
+          <p className="mt-3 text-gray-600 dark:text-gray-400">
+            Have questions or suggestions? We&apos;d love to hear from you. Reach out through the form below or via our social channels.
+          </p>
         </div>
       </div>
     </div>

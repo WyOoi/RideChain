@@ -2,8 +2,11 @@
 
 import Navbar from "@/components/Navbar";
 import Link from 'next/link';
+import { useWallet } from '@solana/wallet-adapter-react';
 
 export default function PrivacyPolicy() {
+  const { publicKey, signTransaction } = useWallet();
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100/60 via-purple-50/70 to-indigo-100/60 dark:from-slate-900 dark:via-gray-800/90 dark:to-slate-900">
       <Navbar />
