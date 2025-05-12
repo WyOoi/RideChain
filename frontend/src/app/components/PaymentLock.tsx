@@ -1,6 +1,7 @@
 import { FC, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
+import { Program, AnchorProvider, web3 } from '@project-serum/anchor';
+import BN from 'bn.js';
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { IDL } from '../../idl/contract';
 
