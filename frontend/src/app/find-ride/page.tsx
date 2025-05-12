@@ -3,6 +3,7 @@
 import Navbar from "@/components/Navbar";
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import {
     PublicKey,
@@ -116,6 +117,7 @@ const RIDES_STORAGE_KEY = 'campusCarpoolRides';
 const CHAT_MESSAGES_STORAGE_KEY = 'campusCarpoolChatMessages';
 
 export default function FindRidePage() {
+  const router = useRouter();
   // --- State for Carpool Features ---
   const [currentSearchMode, setCurrentSearchMode] = useState<'findOffers' | 'findRequests'>('findOffers'); // New state for search mode
   // In a real app, rides would come from a global context or API
@@ -265,7 +267,7 @@ export default function FindRidePage() {
     const newMessage: Message = {
       id: Date.now().toString(),
       text: chatInputMessage,
-      sender: 'user', // All messages from current user for now
+      sender: 'user', // Mark as sent by the current user
       timestamp: Date.now(),
     };
 
@@ -283,9 +285,41 @@ export default function FindRidePage() {
     }
 
     console.log(`Message to driver ${activeChatRide.driver} for ride ${activeChatRide.id}: ${chatInputMessage}`);
-    // Alert can be removed or changed now that messages are displayed
-    // alert(`Message sent (logged & saved locally for this ride):\nMessage: ${chatInputMessage}`);
     setChatInputMessage("");
+    
+    // For testing purposes, simulate a driver response after 1 second
+    setTimeout(() => {
+      const driverResponse: Message = {
+        id: Date.now().toString(),
+        text: "Thanks for your message! This is an automated response to test message positioning.",
+        sender: 'driver', // Mark as from the driver
+        timestamp: Date.now(),
+      };
+      
+      // Add to local state
+      setCurrentChatMessages(prevMessages => [...prevMessages, driverResponse]);
+      
+      // Add to storage
+      try {
+        const updatedStoredMessagesRaw = localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY);
+        const updatedAllStoredMessages: Record<string, Message[]> = updatedStoredMessagesRaw 
+          ? JSON.parse(updatedStoredMessagesRaw) 
+          : {};
+          
+        if (updatedAllStoredMessages[activeChatRide.id]) {
+          updatedAllStoredMessages[activeChatRide.id] = [
+            ...updatedAllStoredMessages[activeChatRide.id], 
+            driverResponse
+          ];
+        } else {
+          updatedAllStoredMessages[activeChatRide.id] = [driverResponse];
+        }
+        
+        localStorage.setItem(CHAT_MESSAGES_STORAGE_KEY, JSON.stringify(updatedAllStoredMessages));
+      } catch (error) {
+        console.error("Error saving driver response to localStorage:", error);
+      }
+    }, 1000);
   };
 
   // Add new function to handle payment locking
@@ -449,6 +483,14 @@ export default function FindRidePage() {
     }
   }
 
+  // Add function to navigate to profile with the ride ID
+  const handleChatWithDriver = (ride: Ride) => {
+    // Store the ride ID in local storage to open the correct chat in profile
+    localStorage.setItem('openChatRideId', ride.id);
+    // Navigate to profile page
+    router.push('/profile');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100/60 via-purple-50/70 to-indigo-100/60 dark:from-slate-900 dark:via-gray-800/90 dark:to-slate-900">
       <Navbar />
@@ -561,9 +603,9 @@ export default function FindRidePage() {
                 <p className="text-gray-600 dark:text-gray-400 text-center py-4">
                   No {currentSearchMode === 'findOffers' ? 'ride offers' : 'ride requests'} currently available. 
                   {currentSearchMode === 'findOffers' && 
-                    <Link href="/add-ride" legacyBehavior><a className="text-blue-600 hover:underline">Offer a ride</a></Link> }
+                    <Link href="/add-ride" className="text-blue-600 hover:underline">Offer a ride</Link> }
                   {currentSearchMode === 'findRequests' && 
-                    <Link href="/add-ride" legacyBehavior><a className="text-green-600 hover:underline">Request a ride</a></Link> }
+                    <Link href="/add-ride" className="text-green-600 hover:underline">Request a ride</Link> }
                    or try a search later!
                 </p>
             )}
@@ -605,7 +647,7 @@ export default function FindRidePage() {
                     </p>
                     <div className="flex items-center space-x-2">
                         <button 
-                            onClick={() => handleOpenChat(ride)}
+                            onClick={() => handleChatWithDriver(ride)}
                             className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-teal-500 hover:bg-teal-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400 transition-colors duration-150 ease-in-out">
                             {ride.type === 'offer' ? 'Chat with Driver' : 'Chat with Requester'}
                         </button>
@@ -664,10 +706,12 @@ export default function FindRidePage() {
                 ) : (
                   currentChatMessages.map(msg => (
                     <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] p-2 rounded-lg shadow ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-100'}`}>
-                          <p className="text-sm">{msg.text}</p>
-                          <p className={`text-xs mt-1 ${msg.sender === 'user' ? 'text-blue-200' : 'text-gray-500 dark:text-gray-400'}`}>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        </div>
+                      <div className={`max-w-[80%] p-2 rounded-lg shadow ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-100'}`}>
+                        <p className="text-sm">{msg.text}</p>
+                        <p className={`text-xs mt-1 ${msg.sender === 'user' ? 'text-blue-200' : 'text-gray-500 dark:text-gray-400'}`}>
+                          {msg.sender === 'user' ? 'You' : 'Driver'} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
                     </div>
                   ))
                 )}

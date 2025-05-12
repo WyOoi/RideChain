@@ -4,7 +4,8 @@ import Navbar from "@/components/Navbar";
 import { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react'; // For identifying the driver
 import Link from 'next/link';
-import LocationAutocomplete from '@/components/LocationAutocomplete';
+import OsmLocationAutocomplete from '@/components/OsmLocationAutocomplete';
+import { calculateDistance, calculatePrice, formatPrice } from '@/utils/distance';
 
 // Data for states and universities (duplicated for now)
 const malaysianStates = [
@@ -117,6 +118,18 @@ export default function AddRidePage() {
   const [addRidePrice, setAddRidePrice] = useState("");
   const [addRideSeats, setAddRideSeats] = useState("");
   const [addRideFormKey, setAddRideFormKey] = useState(Date.now());
+  
+  // Add state for location validation
+  const [isOriginValid, setIsOriginValid] = useState(false);
+  const [isDestinationValid, setIsDestinationValid] = useState(false);
+  
+  // New state for coordinates
+  const [originCoordinates, setOriginCoordinates] = useState<{lat: number, lon: number} | null>(null);
+  const [destinationCoordinates, setDestinationCoordinates] = useState<{lat: number, lon: number} | null>(null);
+  
+  // Calculate distance and price
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [calculatedPrice, setCalculatedPrice] = useState<number | null>(null);
 
   // Load rides from localStorage on component mount
   useEffect(() => {
@@ -132,6 +145,7 @@ export default function AddRidePage() {
     }
   }, []);
 
+  // Update universities when state changes
   useEffect(() => {
     if (addRideState) {
       setAddRideUniversitiesInState(
@@ -142,9 +156,72 @@ export default function AddRidePage() {
       setAddRideUniversitiesInState([]);
     }
   }, [addRideState]);
+  
+  // Auto-sync location selection with state
+  useEffect(() => {
+    if (addRideState && originCoordinates) {
+      // When we have both state and origin coordinates
+      // We could update the location field to include state information if needed
+      // This could help with more specific location formatting
+    }
+  }, [addRideState, originCoordinates]);
+  
+  // Calculate distance and price when both coordinates are available
+  useEffect(() => {
+    if (originCoordinates && destinationCoordinates) {
+      const distance = calculateDistance(
+        originCoordinates.lat, 
+        originCoordinates.lon, 
+        destinationCoordinates.lat, 
+        destinationCoordinates.lon
+      );
+      setDistanceKm(distance);
+      
+      // Always calculate price based on distance (since it's no longer manually editable)
+      const price = calculatePrice(distance);
+      setCalculatedPrice(price);
+      setAddRidePrice(formatPrice(price));
+    } else {
+      setDistanceKm(null);
+      setCalculatedPrice(null);
+      setAddRidePrice("");
+    }
+  }, [originCoordinates, destinationCoordinates]);
+  
+  // Handle origin coordinates change
+  const handleOriginCoordinatesChange = (lat: number, lon: number) => {
+    setOriginCoordinates({ lat, lon });
+  };
+  
+  // Handle destination coordinates change
+  const handleDestinationCoordinatesChange = (lat: number, lon: number) => {
+    setDestinationCoordinates({ lat, lon });
+  };
+  
+  // Extract state from OSM location data and set it automatically
+  const handleOriginChange = (value: string) => {
+    setAddRideOrigin(value);
+    
+    // Try to extract state from the origin address
+    for (const state of malaysianStates) {
+      if (value.includes(state)) {
+        setAddRideState(state);
+        break;
+      }
+    }
+  };
 
+  // Handle price input change - now removed as price is no longer editable
+  
   const handleAddRideSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    
+    // Prevent submission if locations aren't valid
+    if (!isOriginValid || !isDestinationValid) {
+      alert('Please select valid locations from the suggestions.');
+      return;
+    }
+    
     if (!publicKey) {
       alert(`Please connect your wallet to ${currentMode === 'offer' ? 'offer a ride' : 'request a ride'}.`);
       return;
@@ -188,6 +265,12 @@ export default function AddRidePage() {
     setAddRidePrice("");
     setAddRideSeats("");
     setAddRideFormKey(Date.now()); 
+    
+    // Reset coordinates and price calculation state
+    setOriginCoordinates(null);
+    setDestinationCoordinates(null);
+    setDistanceKm(null);
+    setCalculatedPrice(null);
   };
 
   return (
@@ -224,24 +307,28 @@ export default function AddRidePage() {
           <form key={addRideFormKey} onSubmit={handleAddRideSubmit} className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm p-8 md:p-10 rounded-2xl shadow-xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
-                <LocationAutocomplete 
+                <OsmLocationAutocomplete 
                   id="add-origin"
                   name="add-origin"
                   label="Origin"
                   required
                   value={addRideOrigin}
-                  onChange={setAddRideOrigin}
+                  onChange={handleOriginChange}
+                  onValidityChange={setIsOriginValid}
+                  onCoordinatesChange={handleOriginCoordinatesChange}
                   placeholder="Search for pickup location"
                 />
               </div>
               <div>
-                <LocationAutocomplete
+                <OsmLocationAutocomplete
                   id="add-destination"
                   name="add-destination"
                   label="Specific Destination"
                   required
                   value={addRideDestination}
                   onChange={setAddRideDestination}
+                  onValidityChange={setIsDestinationValid}
+                  onCoordinatesChange={handleDestinationCoordinatesChange}
                   placeholder="Search for drop-off location"
                 />
               </div>
@@ -249,20 +336,42 @@ export default function AddRidePage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
-                <label htmlFor="add-state" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">State</label>
-                <select id="add-state" name="add-state" value={addRideState} onChange={(e) => setAddRideState(e.target.value)} required className="input-field-page">
-                  <option value="">Select State</option>
+                <label htmlFor="add-state" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">State (Auto-detected)</label>
+                <select 
+                  id="add-state" 
+                  name="add-state" 
+                  value={addRideState} 
+                  onChange={(e) => setAddRideState(e.target.value)} 
+                  disabled={true}
+                  required 
+                  className="input-field-page disabled:bg-gray-200 dark:disabled:bg-gray-700/50"
+                >
+                  <option value="">Select Origin to Auto-detect State</option>
                   {malaysianStates.map(state => (<option key={state} value={state}>{state}</option>))}
                 </select>
+                <p className="text-xs text-gray-500 mt-1">State is automatically detected from origin</p>
               </div>
               <div>
                 <label htmlFor="add-university" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">University / Main Area</label>
                 <select id="add-university" name="add-university" value={addRideUniversity} onChange={(e) => setAddRideUniversity(e.target.value)} disabled={!addRideState || addRideUniversitiesInState.length === 0} required className="input-field-page disabled:bg-gray-200 dark:disabled:bg-gray-700/50">
-                  <option value="">{addRideState ? "Select University" : "Select state first"}</option>
+                  <option value="">{addRideState ? "Select University" : "Select origin first"}</option>
                   {addRideUniversitiesInState.map(uni => (<option key={uni.name} value={uni.name}>{uni.name}</option>))}
                 </select>
               </div>
             </div>
+
+            {distanceKm !== null && (
+              <div className="mb-6 bg-blue-50 dark:bg-blue-900/30 p-4 rounded-lg">
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  <span className="font-medium">Estimated Distance:</span> {distanceKm.toFixed(1)} km
+                </p>
+                {calculatedPrice !== null && (
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                    Auto-calculated price: RM {formatPrice(calculatedPrice)} (RM 3.50 base for 5km + RM 0.50/km)
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               <div>
@@ -275,9 +384,22 @@ export default function AddRidePage() {
               </div>
               <div>
                 <label htmlFor="add-price" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  {currentMode === 'offer' ? 'Price per Seat (RM)' : 'Willing to Pay (RM)'}
+                  {currentMode === 'offer' ? 'Price per Seat (RM)' : 'Willing to Pay (RM)'} <span className="text-xs text-gray-500">(Auto-calculated)</span>
                 </label>
-                <input type="number" name="add-price" id="add-price" min="0" step="0.50" required className="input-field-page" placeholder="e.g., 5.00" value={addRidePrice} onChange={(e) => setAddRidePrice(e.target.value)} />
+                <input 
+                  type="number" 
+                  name="add-price" 
+                  id="add-price" 
+                  min="0" 
+                  step="0.50" 
+                  required 
+                  className="input-field-page disabled:bg-gray-200 dark:disabled:bg-gray-700/50" 
+                  placeholder="Auto-calculated from distance..." 
+                  value={addRidePrice}
+                  disabled={true}
+                  readOnly
+                />
+                <p className="text-xs text-gray-500 mt-1">Price is automatically calculated based on distance</p>
               </div>
             </div>
             
@@ -293,12 +415,19 @@ export default function AddRidePage() {
               ${currentMode === 'offer' 
                 ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500 dark:bg-green-500 dark:hover:bg-green-600' 
                 : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500 dark:bg-blue-500 dark:hover:bg-blue-600'}
-              ${!publicKey ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={!publicKey}
+              ${(!publicKey || !isOriginValid || !isDestinationValid) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!publicKey || !isOriginValid || !isDestinationValid}
             >
-              {publicKey ? (currentMode === 'offer' ? 'Add My Ride Offer' : 'Submit My Ride Request') : 'Connect Wallet to Proceed'}
+              {!publicKey ? 'Connect Wallet to Proceed' : 
+               (!isOriginValid || !isDestinationValid) ? 'Please Select Valid Locations' :
+               (currentMode === 'offer' ? 'Add My Ride Offer' : 'Submit My Ride Request')}
             </button>
-             {!publicKey && <p className="text-xs text-center mt-2 text-gray-500 dark:text-gray-400">Posting requires a connected wallet.</p>}
+            {!publicKey && <p className="text-xs text-center mt-2 text-gray-500 dark:text-gray-400">Posting requires a connected wallet.</p>}
+            {publicKey && (!isOriginValid || !isDestinationValid) && 
+              <p className="text-xs text-center mt-2 text-red-500 dark:text-red-400">
+                Both locations must be valid to continue.
+              </p>
+            }
           </form>
         </section>
         {rides.length > 0 && (
@@ -323,7 +452,7 @@ export default function AddRidePage() {
             </section>
         )}
         <p className="mt-4 text-gray-600 dark:text-gray-400 text-center">
-          Need to find a ride instead? Check out the <Link href="/find-ride"><a className="text-blue-600 hover:underline">Find a Ride</a></Link> page.
+          Need to find a ride instead? Check out the <Link href="/find-ride" className="text-blue-600 hover:underline">Find a Ride</Link> page.
           Don&apos;t forget to connect your wallet first!
         </p>
       </main>
