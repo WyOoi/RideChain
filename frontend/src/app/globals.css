@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  /* Define theme-specific aliases here if needed, or manage through Tailwind config */
+  /* For example, if you still need --color-background: 
+     --color-background: var(--background);
+     --color-foreground: var(--foreground);
+     --font-sans: var(--font-geist-sans); // Ensure --font-geist-sans is defined elsewhere or via Tailwind
+     --font-mono: var(--font-geist-mono); // Ensure --font-geist-mono is defined elsewhere or via Tailwind
+  */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom wallet button styling */
+.wallet-button {
+  background: linear-gradient(to right, #9945FF, #14F195) !important;
+  border: none !important;
+  color: white !important;
+  font-weight: bold !important;
+  border-radius: 8px !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.wallet-button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
