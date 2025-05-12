@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import Link from 'next/link'; // For potential future links to ride details
 import Image from 'next/image'; // Import Next.js Image component
+import LocationAutocomplete from '@/components/LocationAutocomplete';
 
 // Ride type should be consistent with other pages
 interface Ride {
@@ -298,27 +299,29 @@ export default function ProfilePage() {
                           <h3 className="text-lg font-semibold text-blue-700 dark:text-blue-400">Edit Ride</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Origin
-                              </label>
-                              <input
-                                type="text"
+                              <LocationAutocomplete
+                                label="Origin"
                                 name="origin"
+                                id="edit-origin"
                                 value={editFormData?.origin || ''}
-                                onChange={handleEditFormChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                                onChange={(value) => 
+                                  setEditFormData(prev => prev ? { ...prev, origin: value } : null)
+                                }
+                                required
+                                placeholder="Enter pickup location"
                               />
                             </div>
                             <div>
-                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Destination
-                              </label>
-                              <input
-                                type="text"
+                              <LocationAutocomplete
+                                label="Destination"
                                 name="destination"
+                                id="edit-destination"
                                 value={editFormData?.destination || ''}
-                                onChange={handleEditFormChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                                onChange={(value) => 
+                                  setEditFormData(prev => prev ? { ...prev, destination: value } : null)
+                                }
+                                required
+                                placeholder="Enter drop-off location"
                               />
                             </div>
                             <div>

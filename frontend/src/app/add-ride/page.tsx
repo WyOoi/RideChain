@@ -4,6 +4,7 @@ import Navbar from "@/components/Navbar";
 import { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react'; // For identifying the driver
 import Link from 'next/link';
+import LocationAutocomplete from '@/components/LocationAutocomplete';
 
 // Data for states and universities (duplicated for now)
 const malaysianStates = [
@@ -223,12 +224,26 @@ export default function AddRidePage() {
           <form key={addRideFormKey} onSubmit={handleAddRideSubmit} className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm p-8 md:p-10 rounded-2xl shadow-xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
-                <label htmlFor="add-origin" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Origin</label>
-                <input type="text" name="add-origin" id="add-origin" required className="input-field-page" placeholder="e.g., My Apartment Name" value={addRideOrigin} onChange={(e) => setAddRideOrigin(e.target.value)} />
+                <LocationAutocomplete 
+                  id="add-origin"
+                  name="add-origin"
+                  label="Origin"
+                  required
+                  value={addRideOrigin}
+                  onChange={setAddRideOrigin}
+                  placeholder="Search for pickup location"
+                />
               </div>
               <div>
-                <label htmlFor="add-destination" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Specific Destination</label>
-                <input type="text" name="add-destination" id="add-destination" required className="input-field-page" placeholder="e.g., Main Library, Block C" value={addRideDestination} onChange={(e) => setAddRideDestination(e.target.value)} />
+                <LocationAutocomplete
+                  id="add-destination"
+                  name="add-destination"
+                  label="Specific Destination"
+                  required
+                  value={addRideDestination}
+                  onChange={setAddRideDestination}
+                  placeholder="Search for drop-off location"
+                />
               </div>
             </div>
 
