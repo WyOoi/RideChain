@@ -9,8 +9,8 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   env: {
-    // Add your Google Maps API key here or set it in .env.local file
-    NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '',
+    // Google Maps API key
+    NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'AIzaSyDHNUG9E870MPZ38LzijxoPyPgtiUFYjTM',
   },
   // Add any other custom Next.js configuration options here
 };
