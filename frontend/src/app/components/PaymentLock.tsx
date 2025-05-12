@@ -1,7 +1,7 @@
 import { FC, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { Program, AnchorProvider, web3 } from '@project-serum/anchor';
-import { PublicKey } from '@solana/web3.js';
+import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
+import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { IDL } from '../../idl/contract';
 
 interface PaymentLockProps {
@@ -19,12 +19,22 @@ export const PaymentLock: FC<PaymentLockProps> = ({
   onPaymentLocked,
   onPaymentReleased,
 }) => {
-  const { publicKey, signTransaction } = useWallet();
+  const { publicKey, signTransaction, wallet } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const getProvider = () => {
+    if (!wallet) return null;
+    return new AnchorProvider(
+      new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
+      wallet as any,
+      { commitment: 'confirmed' }
+    );
+  };
+
   const lockPayment = async () => {
-    if (!publicKey || !signTransaction) {
+    const provider = getProvider();
+    if (!publicKey || !provider) {
       setError('Please connect your wallet first');
       return;
     }
@@ -33,15 +43,8 @@ export const PaymentLock: FC<PaymentLockProps> = ({
       setIsLoading(true);
       setError(null);
 
-      // Initialize provider and program
-      const provider = new AnchorProvider(
-        new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
-        { publicKey, signTransaction },
-        { commitment: 'confirmed' }
-      );
-
       const program = new Program(
-        IDL,
+        IDL as any,
         new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || ''),
         provider
       );
@@ -56,7 +59,7 @@ export const PaymentLock: FC<PaymentLockProps> = ({
       const tx = await program.methods
         .initializeRide(
           rideId,
-          new web3.BN(amount * web3.LAMPORTS_PER_SOL),
+          new BN(amount * LAMPORTS_PER_SOL),
           new PublicKey(driverAddress),
           publicKey
         )
@@ -78,7 +81,8 @@ export const PaymentLock: FC<PaymentLockProps> = ({
   };
 
   const releasePayment = async () => {
-    if (!publicKey || !signTransaction) {
+    const provider = getProvider();
+    if (!publicKey || !provider) {
       setError('Please connect your wallet first');
       return;
     }
@@ -87,15 +91,8 @@ export const PaymentLock: FC<PaymentLockProps> = ({
       setIsLoading(true);
       setError(null);
 
-      // Initialize provider and program
-      const provider = new AnchorProvider(
-        new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
-        { publicKey, signTransaction },
-        { commitment: 'confirmed' }
-      );
-
       const program = new Program(
-        IDL,
+        IDL as any,
         new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || ''),
         provider
       );

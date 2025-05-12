@@ -137,12 +137,6 @@ export default function FindRidePage() {
   const [chatInputMessage, setChatInputMessage] = useState("");
   const [currentChatMessages, setCurrentChatMessages] = useState<Message[]>([]);
 
-  // State for payment feature
-  const [isPaying, setIsPaying] = useState(false);
-  const [paymentTxSignature, setPaymentTxSignature] = useState<string | null>(null);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [activePaymentRideId, setActivePaymentRideId] = useState<string | null>(null);
-
   // Add new state for payment locking
   const [isPaymentLocked, setIsPaymentLocked] = useState(false);
   const [showPaymentLock, setShowPaymentLock] = useState(false);
@@ -255,7 +249,9 @@ export default function FindRidePage() {
     setActiveChatRide(ride);
     setChatInputMessage("");
     try {
-      const allStoredMessages = JSON.parse(localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY) || '{}');
+      // Use unknown for JSON parse result
+      const storedMessagesRaw = localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY);
+      const allStoredMessages: Record<string, Message[]> = storedMessagesRaw ? JSON.parse(storedMessagesRaw) : {};
       setCurrentChatMessages(allStoredMessages[ride.id] || []);
     } catch (error) {
       console.error("Error loading chat messages from localStorage:", error);
@@ -277,13 +273,13 @@ export default function FindRidePage() {
     setCurrentChatMessages(updatedMessagesForRide);
 
     try {
-      const allStoredMessages = JSON.parse(localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY) || '{}');
+      // Use unknown for JSON parse result
+      const storedMessagesRaw = localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY);
+      const allStoredMessages: Record<string, Message[]> = storedMessagesRaw ? JSON.parse(storedMessagesRaw) : {};
       allStoredMessages[activeChatRide.id] = updatedMessagesForRide;
       localStorage.setItem(CHAT_MESSAGES_STORAGE_KEY, JSON.stringify(allStoredMessages));
     } catch (error) {
       console.error("Error saving chat message to localStorage:", error);
-      // Optionally, provide feedback to the user that saving failed
-      // And potentially revert setCurrentChatMessages if persistence is critical before showing locally
     }
 
     console.log(`Message to driver ${activeChatRide.driver} for ride ${activeChatRide.id}: ${chatInputMessage}`);
@@ -291,98 +287,6 @@ export default function FindRidePage() {
     // alert(`Message sent (logged & saved locally for this ride):\nMessage: ${chatInputMessage}`);
     setChatInputMessage("");
   };
-
-  const handlePayForRide = useCallback(async (rideToPay: Ride) => {
-    if (!publicKey || !sendTransaction || !connection) {
-      setPaymentError("Wallet not connected or connection issue.");
-      return;
-    }
-
-    if (rideToPay.type !== 'offer') {
-        setPaymentError("Cannot pay for a ride request.");
-        return;
-    }
-
-    // Ensure the driver's address is a valid base58 string before creating PublicKey
-    // This is crucial if old data with "..." still exists or if driver key is somehow invalid
-    let recipientPublicKey: PublicKey;
-    try {
-        recipientPublicKey = new PublicKey(rideToPay.driver);
-    } catch (e) {
-        console.error("Invalid driver public key:", rideToPay.driver, e);
-        setPaymentError("Driver address is invalid. Cannot proceed with payment.");
-        setActivePaymentRideId(rideToPay.id); // Set active ride for error display context
-        return;
-    }
-
-    const conversionFactor = 0.0013311509375834281;
-    const priceInMYR = parseFloat(rideToPay.price);
-
-    if (isNaN(priceInMYR) || priceInMYR <= 0) {
-        setPaymentError("Invalid ride price entered.");
-        setActivePaymentRideId(rideToPay.id);
-        return;
-    }
-
-    const ridePriceSOL = priceInMYR * conversionFactor;
-    
-    if (isNaN(ridePriceSOL) || ridePriceSOL <= 0) {
-      setPaymentError("Calculated SOL amount is invalid or zero after conversion.");
-      setActivePaymentRideId(rideToPay.id); // Set active ride for error display context
-      return;
-    }
-    // Lamports should be an integer.
-    const amountLamports = Math.round(ridePriceSOL * LAMPORTS_PER_SOL);
-
-
-    setIsPaying(true);
-    setActivePaymentRideId(rideToPay.id);
-    setPaymentTxSignature(null);
-    setPaymentError(null);
-
-    try {
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: recipientPublicKey, // Use the validated PublicKey
-          lamports: amountLamports,    // Use the parsed amount in Lamports
-        })
-      );
-
-      // Get a recent blockhash
-      transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      transaction.feePayer = publicKey;
-
-      const signature = await sendTransaction(transaction, connection);
-      await connection.confirmTransaction(signature, 'processed');
-      
-      setPaymentTxSignature(signature);
-      console.log("Payment successful! Signature:", signature);
-      // Potentially update UI to show ride as paid, or navigate away, etc.
-      // For now, just logs and shows signature.
-
-    } catch (error: any) {
-      console.error("Payment failed:", error);
-      let errorMessage = "Payment failed. Please try again.";
-      if (error instanceof SendTransactionError) {
-        // For SendTransactionError, you might have more specific logs
-        // e.g., error.logs?.join('\n')
-        errorMessage = `Transaction failed: ${error.message}`;
-        if (error.logs) {
-            console.error("Transaction logs:", error.logs);
-            // errorMessage += ` Logs: ${error.logs.join(", ")}`;
-        }
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      setPaymentError(errorMessage);
-    } finally {
-      setIsPaying(false);
-      // Keep activePaymentRideId for a bit so the message stays visible, or clear it after a delay
-      // For now, let's clear it. If message disappears too fast, we can adjust.
-      // setTimeout(() => setActivePaymentRideId(null), 5000); // Example delay
-    }
-  }, [publicKey, sendTransaction, connection]);
 
   // Add new function to handle payment locking
   const handlePaymentLocked = () => {
