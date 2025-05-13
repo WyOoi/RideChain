@@ -6,6 +6,11 @@ import { useWallet } from '@solana/wallet-adapter-react'; // For identifying the
 import Link from 'next/link';
 import OsmLocationAutocomplete from '@/components/OsmLocationAutocomplete';
 import { calculateDistance, calculatePrice, formatPrice } from '@/utils/distance';
+import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
+import { IDL } from '../../idl/contract';
+import { v4 as uuidv4 } from 'uuid';
+import { useRouter } from 'next/navigation';
+import { emitNewRide } from '../../services/websocket';
 
 // Data for states and universities (duplicated for now)
 const malaysianStates = [
@@ -99,7 +104,7 @@ interface Ride {
 const RIDES_STORAGE_KEY = 'campusCarpoolRides';
 
 export default function AddRidePage() {
-  const { publicKey } = useWallet(); // Get publicKey to identify the driver
+  const { publicKey, wallet } = useWallet(); // Get publicKey to identify the driver
   const [currentMode, setCurrentMode] = useState<'offer' | 'request'>('offer');
   
   // In a real app, addRide would likely come from a global context or API call
@@ -130,6 +135,8 @@ export default function AddRidePage() {
   // Calculate distance and price
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [calculatedPrice, setCalculatedPrice] = useState<number | null>(null);
+
+  const router = useRouter();
 
   // Load rides from localStorage on component mount
   useEffect(() => {
@@ -213,7 +220,64 @@ export default function AddRidePage() {
 
   // Handle price input change - now removed as price is no longer editable
   
-  const handleAddRideSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  // Function to save ride to blockchain
+  async function saveRideToBlockchain(ride: Ride): Promise<boolean> {
+    if (!publicKey || !wallet) {
+      console.error("Wallet not connected");
+      return false;
+    }
+
+    try {
+      const programIdString = process.env.NEXT_PUBLIC_PROGRAM_ID || '';
+      const programId = new web3.PublicKey(programIdString);
+      
+      // Setup provider and program
+      const provider = new AnchorProvider(
+        new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
+        wallet as any,
+        { commitment: 'confirmed' }
+      );
+      
+      const program = new Program(IDL as any, programId, provider);
+      
+      // Create ride on-chain
+      const priceInLamports = new BN(parseFloat(ride.price) * web3.LAMPORTS_PER_SOL);
+      
+      // Call the create_or_update_ride instruction
+      await program.methods
+        .createOrUpdateRide(
+          ride.id,
+          ride.origin,
+          ride.destination,
+          priceInLamports,
+          ride.date,
+          ride.time,
+          parseInt(ride.seats),
+          ride.state,
+          ride.university,
+          ride.type || 'offer',
+          'pending'
+        )
+        .accounts({
+          ride: web3.PublicKey.findProgramAddressSync(
+            [Buffer.from('ride'), Buffer.from(ride.id)],
+            program.programId
+          )[0],
+          driver: publicKey,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .rpc();
+      
+      console.log("Ride saved to blockchain successfully!");
+      return true;
+    } catch (error) {
+      console.error("Error saving ride to blockchain:", error);
+      return false;
+    }
+  }
+
+  // Modify handleSubmit to broadcast new rides via WebSockets
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     
     // Prevent submission if locations aren't valid
@@ -226,8 +290,10 @@ export default function AddRidePage() {
       alert(`Please connect your wallet to ${currentMode === 'offer' ? 'offer a ride' : 'request a ride'}.`);
       return;
     }
-    const newRide: Ride = {
-      id: Date.now().toString(),
+    
+    // Create ride object
+    const newRide = {
+      id: uuidv4(),
       type: currentMode,
       origin: addRideOrigin,
       destination: addRideDestination,
@@ -236,41 +302,54 @@ export default function AddRidePage() {
       date: addRideDate,
       time: addRideTime,
       price: addRidePrice,
-      seats: addRideSeats, // For 'request', this means seats needed
-      driver: publicKey.toBase58(), // Store the full public key
+      seats: addRideSeats,
+      driver: publicKey.toBase58(),
     };
 
+    // First try to save to blockchain
+    const blockchainSaveSuccess = await saveRideToBlockchain(newRide);
+    
+    // Save to local storage regardless of blockchain result
+    // This allows the app to work offline or when blockchain transactions fail
     try {
-      const currentStoredRides = JSON.parse(localStorage.getItem(RIDES_STORAGE_KEY) || '[]') as Ride[];
-      const updatedRides = [...currentStoredRides, newRide];
-      localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
-      setRides(updatedRides); // Update local state to reflect the change
-      alert(`${currentMode === 'offer' ? 'Ride offer' : 'Ride request'} added successfully and saved!`);
+      const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
+      const rides = storedRides ? JSON.parse(storedRides) : [];
+      rides.push(newRide);
+      localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(rides));
+      
+      // Broadcast the new ride to all connected clients via WebSockets
+      emitNewRide(newRide);
+      
+      // Show appropriate success message
+      if (blockchainSaveSuccess) {
+        alert('Ride added successfully and saved to blockchain!');
+      } else {
+        alert('Ride added to local storage. Blockchain save failed - please try again later.');
+      }
+      
+      // Reset form
+      setAddRideOrigin("");
+      setAddRideDestination("");
+      setAddRideState("");
+      setAddRideUniversity("");
+      setAddRideDate("");
+      setAddRideTime("");
+      setAddRidePrice("");
+      setAddRideSeats("");
+      setAddRideFormKey(Date.now());
+      
+      // Reset coordinates and price calculation state
+      setOriginCoordinates(null);
+      setDestinationCoordinates(null);
+      setDistanceKm(null);
+      setCalculatedPrice(null);
+      
+      // Redirect to find-ride page
+      router.push('/find-ride');
     } catch (error) {
-      console.error("Error saving entry to localStorage:", error);
-      alert('Failed to save entry. See console for details.');
-      // Fallback to only local state if localStorage fails for some reason
-      // setRides(prevRides => [...prevRides, newRide]);
-      // alert('Ride added locally (failed to save to browser storage).');
-      return; // Prevent form reset if save failed, or handle as needed
+      console.error("Error saving ride to localStorage:", error);
+      alert('An error occurred while saving the ride. Please try again.');
     }
-    
-    // Reset form fields
-    setAddRideOrigin("");
-    setAddRideDestination("");
-    setAddRideState("");
-    setAddRideUniversity("");
-    setAddRideDate("");
-    setAddRideTime("");
-    setAddRidePrice("");
-    setAddRideSeats("");
-    setAddRideFormKey(Date.now()); 
-    
-    // Reset coordinates and price calculation state
-    setOriginCoordinates(null);
-    setDestinationCoordinates(null);
-    setDistanceKm(null);
-    setCalculatedPrice(null);
   };
 
   return (
@@ -304,7 +383,7 @@ export default function AddRidePage() {
             </button>
           </div>
 
-          <form key={addRideFormKey} onSubmit={handleAddRideSubmit} className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm p-8 md:p-10 rounded-2xl shadow-xl">
+          <form key={addRideFormKey} onSubmit={handleSubmit} className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm p-8 md:p-10 rounded-2xl shadow-xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
                 <OsmLocationAutocomplete 

@@ -15,6 +15,12 @@ import {
 import { PaymentLock } from '../components/PaymentLock';
 import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
 import { IDL } from '../../idl/contract';
+import { 
+  initializeSocket, 
+  subscribeToRideUpdates,
+  subscribeToNewRides,
+  subscribeToDeletedRides
+} from '../../services/websocket';
 
 // Data for states and universities (from test2 template, duplicated for now)
 const malaysianStates = [
@@ -91,6 +97,7 @@ const allUniversities = [
 ];
 
 // Ride type (duplicated for now)
+// This should be moved to a shared type file and imported instead
 interface Ride {
   id: string;
   type: 'offer' | 'request';
@@ -116,6 +123,64 @@ interface Message {
 const RIDES_STORAGE_KEY = 'campusCarpoolRides';
 const CHAT_MESSAGES_STORAGE_KEY = 'campusCarpoolChatMessages';
 
+// Add blockchain data fetching function
+async function fetchRidesFromBlockchain() {
+  try {
+    const programIdString = process.env.NEXT_PUBLIC_PROGRAM_ID || '';
+    const programId = new web3.PublicKey(programIdString);
+    
+    // Setup connection (no need for wallet when just reading)
+    const connection = new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899');
+    
+    // Find all rides created by the program (using getProgramAccounts)
+    const accounts = await connection.getProgramAccounts(programId, {
+      filters: [
+        {
+          memcmp: {
+            offset: 8, // Skip the account discriminator
+            bytes: web3.PublicKey.default.toBase58(), // This is a placeholder - actual filtering depends on your data structure
+          },
+        },
+      ],
+    });
+    
+    // Parse the account data
+    const provider = new AnchorProvider(connection, {} as any, {});
+    const program = new Program(IDL as any, programId, provider);
+    
+    const rides = accounts.map(account => {
+      try {
+        // Parse account data using the Ride account struct from IDL
+        const rideAccount = program.coder.accounts.decode('Ride', account.account.data);
+        
+        // Convert to our frontend Ride type
+        return {
+          id: rideAccount.id,
+          type: rideAccount.ride_type,
+          origin: rideAccount.origin,
+          destination: rideAccount.destination,
+          state: rideAccount.state,
+          university: rideAccount.university,
+          date: rideAccount.date,
+          time: rideAccount.time,
+          price: (rideAccount.price.toNumber() / web3.LAMPORTS_PER_SOL).toString(),
+          seats: rideAccount.seats.toString(),
+          driver: rideAccount.driver.toBase58(),
+          paymentStatus: rideAccount.payment_status,
+        };
+      } catch (error) {
+        console.error('Error decoding ride account:', error);
+        return null;
+      }
+    }).filter(ride => ride !== null);
+    
+    return rides;
+  } catch (error) {
+    console.error('Error fetching rides from blockchain:', error);
+    return [];
+  }
+}
+
 export default function FindRidePage() {
   const router = useRouter();
   // --- State for Carpool Features ---
@@ -124,6 +189,7 @@ export default function FindRidePage() {
   const [rides, setRides] = useState<Ride[]>([]); 
   const [filteredRides, setFilteredRides] = useState<Ride[]>([]);
   const [searchPerformed, setSearchPerformed] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   // State for search form
   const [searchState, setSearchState] = useState("");
@@ -150,32 +216,114 @@ export default function FindRidePage() {
   const [paymentErrorRideId, setPaymentErrorRideId] = useState<string | null>(null);
   const [paymentErrorMessage, setPaymentErrorMessage] = useState<string | null>(null);
 
-  // Load rides from localStorage on component mount
+  // Initialize WebSocket connection
   useEffect(() => {
-    try {
-      const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
-      if (storedRides) {
-        const parsedRides = JSON.parse(storedRides) as Ride[];
-        setRides(parsedRides);
-        // Initially, filteredRides should also be filtered by the currentSearchMode
-        if (!searchPerformed) { 
-          const initialFilter = parsedRides.filter(ride => 
-            currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
-          );
-          setFilteredRides(initialFilter);
+    // Connect to WebSocket
+    const socket = initializeSocket();
+    
+    // Clean up on unmount
+    return () => {
+      // No need to disconnect the socket here as it should persist across the app
+    };
+  }, []);
+  
+  // Subscribe to ride updates
+  useEffect(() => {
+    // Subscribe to ride updates
+    const unsubscribeRideUpdates = subscribeToRideUpdates((updatedRide) => {
+      setRides(prevRides =>
+        prevRides.map(ride => ride.id === updatedRide.id ? updatedRide : ride)
+      );
+      
+      // Update filteredRides if necessary
+      if (searchPerformed) {
+        setFilteredRides(prevFiltered =>
+          prevFiltered.map(ride => ride.id === updatedRide.id ? updatedRide : ride)
+        );
+      }
+    });
+    
+    // Subscribe to new rides
+    const unsubscribeNewRides = subscribeToNewRides((newRide) => {
+      setRides(prevRides => [...prevRides, newRide]);
+      
+      // Update filteredRides if necessary and if the new ride matches current search mode
+      if (!searchPerformed && 
+          (currentSearchMode === 'findOffers' ? newRide.type === 'offer' : newRide.type === 'request')) {
+        setFilteredRides(prevFiltered => [...prevFiltered, newRide]);
+      }
+    });
+    
+    // Subscribe to deleted rides
+    const unsubscribeDeletedRides = subscribeToDeletedRides((deletedRideId) => {
+      setRides(prevRides => prevRides.filter(ride => ride.id !== deletedRideId));
+      setFilteredRides(prevFiltered => prevFiltered.filter(ride => ride.id !== deletedRideId));
+    });
+    
+    // Clean up subscriptions on unmount
+    return () => {
+      unsubscribeRideUpdates();
+      unsubscribeNewRides();
+      unsubscribeDeletedRides();
+    };
+  }, [searchPerformed, currentSearchMode]);
+
+  // Update useEffect to fetch from blockchain first, then fall back to localStorage
+  useEffect(() => {
+    async function loadRides() {
+      setIsLoading(true);
+      
+      try {
+        // Try to fetch from blockchain first
+        const blockchainRides = await fetchRidesFromBlockchain();
+        
+        // If successful, use blockchain data
+        if (blockchainRides.length > 0) {
+          setRides(blockchainRides);
+          // Store in localStorage for offline access
+          localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(blockchainRides));
+          
+          // Filter rides by current search mode
+          if (!searchPerformed) {
+            const initialFilter = blockchainRides.filter(ride => 
+              currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
+            );
+            setFilteredRides(initialFilter);
+          }
+        } else {
+          // Fall back to localStorage if no blockchain data
+          const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
+          if (storedRides) {
+            const parsedRides = JSON.parse(storedRides) as Ride[];
+            setRides(parsedRides);
+            
+            // Filter rides by current search mode
+            if (!searchPerformed) {
+              const initialFilter = parsedRides.filter(ride => 
+                currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
+              );
+              setFilteredRides(initialFilter);
+            }
+          } else {
+            setRides([]);
+            setFilteredRides([]);
+          }
         }
-      } else {
-        // If no rides in storage, ensure initial state is empty
+      } catch (error) {
+        console.error("Error loading rides:", error);
         setRides([]);
         setFilteredRides([]);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error("Error loading rides from localStorage:", error);
-      setRides([]);
-      setFilteredRides([]);
-      // localStorage.removeItem(RIDES_STORAGE_KEY); // Optional: clear corrupted data
     }
-  }, []); // Keep dependency array empty as intended for initial load
+    
+    loadRides();
+    
+    // Set up periodic refresh (every 30 seconds)
+    const refreshInterval = setInterval(loadRides, 30000);
+    return () => clearInterval(refreshInterval);
+  }, [currentSearchMode, searchPerformed]);
 
   // --- Effects for Carpool Features ---
   useEffect(() => {

@@ -7,6 +7,13 @@ import Link from 'next/link'; // For potential future links to ride details
 import Image from 'next/image'; // Import Next.js Image component
 import OsmLocationAutocomplete from '@/components/OsmLocationAutocomplete';
 import { calculateDistance, calculatePrice, formatPrice } from '@/utils/distance';
+import { 
+  initializeSocket, 
+  subscribeToRideUpdates, 
+  subscribeToDeletedRides,
+  emitRideUpdate,
+  emitRideDeleted
+} from '../../services/websocket';
 
 // Ride type should be consistent with other pages
 interface Ride {
@@ -147,6 +154,45 @@ export default function ProfilePage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+
+  // Initialize WebSocket connection
+  useEffect(() => {
+    // Connect to WebSocket
+    const socket = initializeSocket();
+    
+    // Clean up on unmount
+    return () => {
+      // No need to disconnect the socket here
+    };
+  }, []);
+  
+  // Subscribe to ride updates
+  useEffect(() => {
+    if (!publicKey) return;
+    
+    // Subscribe to ride updates
+    const unsubscribeRideUpdates = subscribeToRideUpdates((updatedRide) => {
+      // Only update rides offered by the current user
+      if (updatedRide.driver === publicKey.toBase58()) {
+        setUserOfferedRides(prevRides =>
+          prevRides.map(ride => ride.id === updatedRide.id ? updatedRide : ride)
+        );
+      }
+    });
+    
+    // Subscribe to deleted rides
+    const unsubscribeDeletedRides = subscribeToDeletedRides((deletedRideId) => {
+      setUserOfferedRides(prevRides => 
+        prevRides.filter(ride => ride.id !== deletedRideId)
+      );
+    });
+    
+    // Clean up subscriptions on unmount
+    return () => {
+      unsubscribeRideUpdates();
+      unsubscribeDeletedRides();
+    };
+  }, [publicKey]);
 
   useEffect(() => {
     if (publicKey) {
@@ -449,6 +495,9 @@ export default function ProfilePage() {
           ride.id === editFormData.id ? editFormData : ride
         ));
         
+        // Broadcast the ride update via WebSockets
+        emitRideUpdate(editFormData);
+        
         // Exit edit mode
         setEditingRideId(null);
         setEditFormData(null);
@@ -470,6 +519,9 @@ export default function ProfilePage() {
         
         // Update local state
         setUserOfferedRides(userOfferedRides.filter(ride => ride.id !== rideId));
+        
+        // Broadcast the ride deletion via WebSockets
+        emitRideDeleted(rideId);
       }
     } catch (error) {
       console.error("Error deleting ride:", error);

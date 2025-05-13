@@ -81,3 +81,83 @@ The application will be available at http://localhost:3000
 ## License
 
 MIT
+
+# RideChain WebSocket Server
+
+This is a simple WebSocket server for handling real-time updates in the RideChain carpooling application.
+
+## Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Start the server:
+
+```bash
+npm start
+```
+
+The server will run on port 3001 by default. You can change this by setting the `PORT` environment variable.
+
+## Deployment
+
+You can deploy this WebSocket server to various platforms:
+
+### Heroku
+
+```bash
+# Login to Heroku
+heroku login
+
+# Create a new Heroku app
+heroku create ridechain-websocket-server
+
+# Deploy to Heroku
+git init
+git add .
+git commit -m "Initial commit"
+git push heroku master
+```
+
+### Vercel
+
+1. Create a `vercel.json` file:
+
+```json
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "server.js"
+    }
+  ]
+}
+```
+
+2. Deploy to Vercel:
+
+```bash
+vercel
+```
+
+## Environment Variables
+
+- `PORT`: The port on which the server will run (default: 3001)
+
+## Frontend Configuration
+
+In your frontend application, set the WebSocket URL in your environment variables:
+
+```
+NEXT_PUBLIC_WEBSOCKET_URL=https://your-websocket-server-url.com
+```
