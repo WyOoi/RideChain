@@ -8,7 +8,6 @@ const nextConfig = {
     // Disable TypeScript during production builds
     ignoreBuildErrors: true,
   },
-  transpilePackages: ['geist'],
   env: {
     // Google Maps API key
     NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'AIzaSyDHNUG9E870MPZ38LzijxoPyPgtiUFYjTM',
@@ -23,9 +22,15 @@ const nextConfig = {
       path: false,
       crypto: false,
     };
+    
+    // Add an alias for the missing module
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@tailwindcss/postcss': require.resolve('./shims/tailwindcss-postcss-shim.js'),
+    };
+    
     return config;
   },
-  // Add any other custom Next.js configuration options here
 };
 
 module.exports = nextConfig; 
