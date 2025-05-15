@@ -13,10 +13,6 @@ const nextConfig = {
     NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'AIzaSyDHNUG9E870MPZ38LzijxoPyPgtiUFYjTM',
   },
   reactStrictMode: true,
-  swcMinify: true,
-  experimental: {
-    appDir: true,
-  },
   webpack: (config) => {
     // This is needed for packages that depend on Node.js modules
     config.resolve.fallback = {
