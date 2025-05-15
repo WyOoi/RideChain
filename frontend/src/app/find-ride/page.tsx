@@ -14,16 +14,16 @@ import {
 } from '@solana/web3.js';
 import { PaymentLock } from '../components/PaymentLock';
 import { AnchorProvider, Program, web3, BN } from '@project-serum/anchor';
-import { IDL } from '../../idl/ride_chain';
+import { IDL } from '@/idl/ride_chain';
 import { 
   initializeSocket, 
   subscribeToRideUpdates,
   subscribeToNewRides,
   subscribeToDeletedRides
-} from '../../services/websocket';
-import { Ride } from '../../types/ride';
-import { emitRideUpdate } from '../../services/websocket';
-import { PROGRAM_ID, RPC_URL, RIDES_STORAGE_KEY } from '../../app/config';
+} from '@/services/websocket';
+import { Ride } from '@/types/ride';
+import { emitRideUpdate } from '@/services/websocket';
+import { PROGRAM_ID, RPC_URL, RIDES_STORAGE_KEY } from '@/app/config';
 
 // Remove the hardcoded exchange rate
 // const RM_TO_SOL_RATE = 0.05; // Example: 1 RM = 0.05 SOL

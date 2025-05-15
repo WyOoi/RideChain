@@ -7,10 +7,15 @@ import Link from 'next/link';
 import OsmLocationAutocomplete from '@/components/OsmLocationAutocomplete';
 import { calculateDistance, calculatePrice, formatPrice } from '@/utils/distance';
 import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
-import { IDL } from '../../idl/contract';
+import { IDL } from '../../idl/ride_chain';
 import { v4 as uuidv4 } from 'uuid';
 import { useRouter } from 'next/navigation';
 import { emitNewRide } from '../../services/websocket';
+import { useAnchorWallet } from '@solana/wallet-adapter-react';
+import { PROGRAM_ID, RPC_URL, LAMPORTS_PER_SOL, RIDES_STORAGE_KEY } from '../../app/config';
+
+// Development mode toggle - set to true to skip blockchain operations
+const DEV_MODE = true;
 
 // Data for states and universities (duplicated for now)
 const malaysianStates = [
@@ -101,10 +106,8 @@ interface Ride {
   driver: string; // Represents the user who created the entry (driver for 'offer', requester for 'request')
 }
 
-const RIDES_STORAGE_KEY = 'campusCarpoolRides';
-
 export default function AddRidePage() {
-  const { publicKey, wallet } = useWallet(); // Get publicKey to identify the driver
+  const { publicKey, sendTransaction, wallet } = useWallet(); // Add sendTransaction hook
   const [currentMode, setCurrentMode] = useState<'offer' | 'request'>('offer');
   
   // In a real app, addRide would likely come from a global context or API call
@@ -222,31 +225,75 @@ export default function AddRidePage() {
   
   // Function to save ride to blockchain
   async function saveRideToBlockchain(ride: Ride): Promise<boolean> {
+    if (DEV_MODE) {
+      console.log("DEV MODE: Skipping blockchain save operation");
+      return true;
+    }
+
     if (!publicKey || !wallet) {
       console.error("Wallet not connected");
       return false;
     }
 
     try {
-      const programIdString = process.env.NEXT_PUBLIC_PROGRAM_ID || '';
-      const programId = new web3.PublicKey(programIdString);
+      // Validate program ID is a valid public key
+      let programId;
+      try {
+        programId = new web3.PublicKey(PROGRAM_ID);
+      } catch (err) {
+        console.error("Invalid program ID:", err);
+        return false;
+      }
       
-      // Setup provider and program
-      const provider = new AnchorProvider(
-        new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
-        wallet as any,
+      // Setup connection with proper configuration
+      const connection = new web3.Connection(
+        RPC_URL,
         { commitment: 'confirmed' }
       );
       
-      const program = new Program(IDL as any, programId, provider);
+      // Create provider (we don't actually need this for creating and sending a transaction)
+      // We'll just create our transaction directly
       
-      // Create ride on-chain
-      const priceInLamports = new BN(parseFloat(ride.price) * web3.LAMPORTS_PER_SOL);
+      console.log("Creating program instance with ID:", programId.toString());
+      let program;
+      try {
+        program = new Program(IDL as any, programId, {
+          connection,
+          publicKey,
+          signTransaction: async () => { throw new Error("Not implemented"); }
+        } as any);
+      } catch (err) {
+        console.error("Failed to initialize program:", err);
+        return false;
+      }
       
-      // Call the create_or_update_ride instruction
-      await program.methods
+      // Format the price correctly
+      const priceInLamports = new BN(parseFloat(ride.price) * LAMPORTS_PER_SOL);
+      
+      // Find the PDA for this ride
+      console.log("Generating PDA for ride with ID:", ride.id.substring(0, 32));
+      console.log("Program ID for PDA generation:", program.programId.toString());
+      
+      const [ridePda] = web3.PublicKey.findProgramAddressSync(
+        [Buffer.from('ride'), Buffer.from(ride.id.substring(0, 32))],
+        program.programId
+      );
+      console.log("Ride PDA:", ridePda.toString());
+      
+      // Create transaction instruction
+      console.log("Creating transaction instruction with params:", {
+        id: ride.id.substring(0, 32),
+        origin: ride.origin,
+        destination: ride.destination, 
+        price: priceInLamports.toString(),
+        seats: parseInt(ride.seats),
+        type: ride.type || 'offer'
+      });
+      
+      // Create transaction instruction
+      const ix = await program.methods
         .createOrUpdateRide(
-          ride.id,
+          ride.id.substring(0, 32),
           ride.origin,
           ride.destination,
           priceInLamports,
@@ -259,19 +306,59 @@ export default function AddRidePage() {
           'pending'
         )
         .accounts({
-          ride: web3.PublicKey.findProgramAddressSync(
-            [Buffer.from('ride'), Buffer.from(ride.id)],
-            program.programId
-          )[0],
+          ride: ridePda,
           driver: publicKey,
           systemProgram: web3.SystemProgram.programId,
         })
-        .rpc();
+        .instruction();
       
-      console.log("Ride saved to blockchain successfully!");
+      // Create a transaction and add our instruction
+      const tx = new web3.Transaction().add(ix);
+      
+      // Get a recent blockhash to include in the transaction
+      const { blockhash } = await connection.getRecentBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = publicKey;
+      
+      // Send the transaction using the wallet adapter's sendTransaction
+      const signature = await sendTransaction(tx, connection);
+      
+      // Wait for transaction confirmation
+      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      if (confirmation.value.err) {
+        throw new Error(`Transaction confirmed with error: ${confirmation.value.err}`);
+      }
+      
+      console.log("Ride saved to blockchain successfully! Transaction:", signature);
       return true;
     } catch (error) {
       console.error("Error saving ride to blockchain:", error);
+      // Log more detailed error information
+      if (error instanceof Error) {
+        console.error("Error name:", error.name);
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+        
+        if (error.message.includes("insufficient funds")) {
+          alert("Insufficient SOL in your wallet. Please add funds and try again.");
+        } else if (error.message.includes("expired")) {
+          alert("Transaction expired. Please try again with a better network connection.");
+        } else if (error.message.includes("blockhash")) {
+          alert("Network error: Could not get a valid blockhash. Please check your internet connection.");
+        } else if (error.message.includes("not found")) {
+          alert("Program not found on the blockchain. The Solana program might not be deployed correctly.");
+        } else if (error.message.includes("User rejected")) {
+          alert("Transaction was rejected by wallet. Please approve the transaction to continue.");
+        } else if (error.message.includes("Attempt to debit an account")) {
+          alert("Transaction failed: Account has insufficient funds. Please add more SOL to your wallet.");
+        } else if (error.message.includes("invalid account data")) {
+          alert("Transaction failed: Invalid account data. The Solana program may not be compatible.");
+        } else {
+          alert(`Blockchain save failed: ${error.message}`);
+        }
+      } else {
+        alert("Blockchain save failed: Unexpected error");
+      }
       return false;
     }
   }
@@ -291,9 +378,9 @@ export default function AddRidePage() {
       return;
     }
     
-    // Create ride object
+    // Create ride object with a shortened ID (max 32 chars for Solana seeds)
     const newRide = {
-      id: uuidv4(),
+      id: uuidv4().replace(/-/g, '').substring(0, 32),
       type: currentMode,
       origin: addRideOrigin,
       destination: addRideDestination,
@@ -317,12 +404,19 @@ export default function AddRidePage() {
       rides.push(newRide);
       localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(rides));
       
+      // Set a flag to force refresh on the find-ride page
+      localStorage.setItem('forceRideRefresh', 'true');
+      
       // Broadcast the new ride to all connected clients via WebSockets
       emitNewRide(newRide);
       
       // Show appropriate success message
       if (blockchainSaveSuccess) {
-        alert('Ride added successfully and saved to blockchain!');
+        if (DEV_MODE) {
+          alert('Ride added successfully! (Blockchain operations skipped in dev mode)');
+        } else {
+          alert('Ride added successfully and saved to blockchain!');
+        }
       } else {
         alert('Ride added to local storage. Blockchain save failed - please try again later.');
       }
@@ -344,8 +438,12 @@ export default function AddRidePage() {
       setDistanceKm(null);
       setCalculatedPrice(null);
       
-      // Redirect to find-ride page
-      router.push('/find-ride');
+      // Redirect to find-ride page with the appropriate mode
+      if (currentMode === 'offer') {
+        router.push('/find-ride?mode=findOffers');
+      } else {
+        router.push('/find-ride?mode=findRequests');
+      }
     } catch (error) {
       console.error("Error saving ride to localStorage:", error);
       alert('An error occurred while saving the ride. Please try again.');

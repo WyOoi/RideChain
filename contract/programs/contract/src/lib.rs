@@ -8,17 +8,13 @@ pub mod contract {
 
     pub fn initialize_ride(
         ctx: Context<InitializeRide>,
-        ride_id: String,
         amount: u64,
-        driver: Pubkey,
-        passenger: Pubkey,
     ) -> Result<()> {
         let ride = &mut ctx.accounts.ride;
-        ride.ride_id = ride_id;
         ride.amount = amount;
-        ride.driver = driver;
-        ride.passenger = passenger;
-        ride.status = RideStatus::PaymentLocked;
+        ride.driver = ctx.accounts.driver.key();
+        ride.passenger = ctx.accounts.passenger.key();
+        ride.payment_status = "locked".to_string();
         ride.created_at = Clock::get()?.unix_timestamp;
 
         // Transfer SOL from passenger to the program
@@ -35,31 +31,26 @@ pub mod contract {
             ],
         )?;
 
-        msg!("Ride initialized with ID: {} and amount: {}", ride_id, amount);
+        msg!("Ride payment locked with amount: {}", amount);
         Ok(())
     }
 
     pub fn release_payment(ctx: Context<ReleasePayment>) -> Result<()> {
         let ride = &mut ctx.accounts.ride;
-        require!(ride.status == RideStatus::PaymentLocked, RideError::InvalidStatus);
-        require!(ride.driver == ctx.accounts.driver.key(), RideError::Unauthorized);
+        require!(ride.payment_status == "locked", RideError::InvalidStatus);
+        
+        // Get the SOL amount in the account
+        let rent_exemption = Rent::get()?.minimum_balance(ride.to_account_info().data_len());
+        let amount_to_transfer = ride.to_account_info().lamports() - rent_exemption;
+        
+        if amount_to_transfer > 0 {
+            // Transfer SOL from the PDA to the driver
+            **ride.to_account_info().try_borrow_mut_lamports()? -= amount_to_transfer;
+            **ctx.accounts.driver.to_account_info().try_borrow_mut_lamports()? += amount_to_transfer;
+        }
 
-        // Transfer SOL from program to driver
-        let transfer_instruction = anchor_lang::solana_program::system_instruction::transfer(
-            &ctx.accounts.ride.key(),
-            &ctx.accounts.driver.key(),
-            ride.amount,
-        );
-        anchor_lang::solana_program::program::invoke(
-            &transfer_instruction,
-            &[
-                ctx.accounts.ride.to_account_info(),
-                ctx.accounts.driver.to_account_info(),
-            ],
-        )?;
-
-        ride.status = RideStatus::PaymentReleased;
-        msg!("Payment released for ride: {}", ride.ride_id);
+        ride.payment_status = "released".to_string();
+        msg!("Payment released for ride: {}", ride.id);
         Ok(())
     }
 
@@ -111,24 +102,43 @@ pub mod contract {
 #[derive(Accounts)]
 pub struct InitializeRide<'info> {
     #[account(
-        init,
-        payer = passenger,
-        space = 8 + Ride::INIT_SPACE,
-        seeds = [b"ride", ride_id.as_bytes()],
+        mut,
+        seeds = [b"ride", ride.id.as_bytes()],
         bump
     )]
     pub ride: Account<'info, Ride>,
+    
+    /// The passenger account - this account pays for the ride
     #[account(mut)]
     pub passenger: Signer<'info>,
+    
+    /// The driver account who will receive payment
+    /// CHECK: This is just used as a data field
+    #[account(mut)]
+    pub driver: UncheckedAccount<'info>,
+    
+    /// The system program
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct ReleasePayment<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"ride", ride.id.as_bytes()],
+        bump
+    )]
     pub ride: Account<'info, Ride>,
+    
+    /// The passenger account who approved the release
     #[account(mut)]
-    pub driver: Signer<'info>,
+    pub passenger: Signer<'info>,
+    
+    /// The driver account that will receive payment
+    /// CHECK: This is just a recipient of funds
+    #[account(mut)]
+    pub driver: UncheckedAccount<'info>,
+    
     pub system_program: Program<'info, System>,
 }
 
@@ -149,6 +159,8 @@ pub struct Ride {
     pub ride_type: String,         // "offer" or "request"
     pub status: String,            // "pending", "confirmed", "completed", "canceled"
     pub payment_status: String,    // "pending", "locked", "released"
+    pub amount: u64,               // Amount locked in payment
+    pub created_at: i64,           // Timestamp when created
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]

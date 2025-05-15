@@ -13,8 +13,8 @@ import {
   subscribeToDeletedRides,
   emitRideUpdate,
   emitRideDeleted
-} from '../../services/websocket';
-import { RIDES_STORAGE_KEY } from '../../app/config';
+} from '@/services/websocket';
+import { RIDES_STORAGE_KEY } from '@/app/config';
 
 // Ride type should be consistent with other pages
 interface Ride {
