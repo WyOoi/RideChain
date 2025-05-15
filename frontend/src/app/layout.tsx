@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 // import { Inter } from "next/font/google"; // Remove Inter
-import { GeistSans } from 'geist/font/sans'; // Import GeistSans
-import { GeistMono } from 'geist/font/mono'; // Import GeistMono
+import { GeistSans } from 'geist/font';
+import { GeistMono } from 'geist/font';
 import "./globals.css";
 import { WalletContextProvider } from "@/components/WalletProvider";
 import { ThemeProvider } from 'next-themes'; // Import ThemeProvider
@@ -19,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
-      <body suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning className={`${GeistSans.className} ${GeistMono.variable}`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <WalletContextProvider>
             {children}

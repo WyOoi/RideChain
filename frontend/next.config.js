@@ -14,9 +14,7 @@ const nextConfig = {
   },
   reactStrictMode: true,
   swcMinify: true,
-  experimental: {
-    appDir: true,
-  },
+  transpilePackages: ['geist'],
   webpack: (config) => {
     // This is needed for packages that depend on Node.js modules
     config.resolve.fallback = {
@@ -26,6 +24,7 @@ const nextConfig = {
       path: false,
       crypto: false,
     };
+    
     return config;
   },
   // Add any other custom Next.js configuration options here
