@@ -32,11 +32,6 @@ export default function Navbar() {
                   Offer a Ride
                 </a>
               </Link>
-              <Link href="/send-sol" legacyBehavior> 
-                <a className="text-base font-medium text-gray-500 hover:text-blue-500 dark:text-gray-400 dark:hover:text-blue-400 transition-colors">
-                  Send SOL
-                </a>
-              </Link>
               <Link href="/profile" legacyBehavior> 
                 <a className="text-base font-medium text-gray-500 hover:text-blue-500 dark:text-gray-400 dark:hover:text-blue-400 transition-colors">
                   My Profile
