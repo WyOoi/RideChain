@@ -14,6 +14,7 @@ import {
   emitRideUpdate,
   emitRideDeleted
 } from '../../services/websocket';
+import { RIDES_STORAGE_KEY } from '../../app/config';
 
 // Ride type should be consistent with other pages
 interface Ride {
@@ -29,8 +30,6 @@ interface Ride {
   seats: string;
   driver: string; // This should match the format stored (e.g., shortened public key)
 }
-
-const RIDES_STORAGE_KEY = 'campusCarpoolRides';
 
 // Data for states and universities (same as add-ride page)
 const malaysianStates = [

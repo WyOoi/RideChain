@@ -13,14 +13,20 @@ import {
     SendTransactionError
 } from '@solana/web3.js';
 import { PaymentLock } from '../components/PaymentLock';
-import { Program, AnchorProvider, web3, BN } from '@project-serum/anchor';
-import { IDL } from '../../idl/contract';
+import { AnchorProvider, Program, web3, BN } from '@project-serum/anchor';
+import { IDL } from '../../idl/ride_chain';
 import { 
   initializeSocket, 
   subscribeToRideUpdates,
   subscribeToNewRides,
   subscribeToDeletedRides
 } from '../../services/websocket';
+import { Ride } from '../../types/ride';
+import { emitRideUpdate } from '../../services/websocket';
+import { PROGRAM_ID, RPC_URL, RIDES_STORAGE_KEY } from '../../app/config';
+
+// Remove the hardcoded exchange rate
+// const RM_TO_SOL_RATE = 0.05; // Example: 1 RM = 0.05 SOL
 
 // Data for states and universities (from test2 template, duplicated for now)
 const malaysianStates = [
@@ -98,21 +104,6 @@ const allUniversities = [
 
 // Ride type (duplicated for now)
 // This should be moved to a shared type file and imported instead
-interface Ride {
-  id: string;
-  type: 'offer' | 'request';
-  origin: string;
-  destination: string;
-  state: string;
-  university: string;
-  date: string;
-  time: string;
-  price: string;
-  seats: string;
-  driver: string;
-  paymentStatus?: 'pending' | 'locked' | 'released';
-}
-
 interface Message {
   id: string;
   text: string;
@@ -120,63 +111,84 @@ interface Message {
   timestamp: number;
 }
 
-const RIDES_STORAGE_KEY = 'campusCarpoolRides';
 const CHAT_MESSAGES_STORAGE_KEY = 'campusCarpoolChatMessages';
 
 // Add blockchain data fetching function
 async function fetchRidesFromBlockchain() {
   try {
-    const programIdString = process.env.NEXT_PUBLIC_PROGRAM_ID || '';
-    const programId = new web3.PublicKey(programIdString);
+    console.log("[Blockchain] Attempting to fetch rides from blockchain");
     
-    // Setup connection (no need for wallet when just reading)
-    const connection = new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899');
+    // Get program ID from config or environment
+    const programIdString = PROGRAM_ID;
     
-    // Find all rides created by the program (using getProgramAccounts)
-    const accounts = await connection.getProgramAccounts(programId, {
-      filters: [
-        {
-          memcmp: {
-            offset: 8, // Skip the account discriminator
-            bytes: web3.PublicKey.default.toBase58(), // This is a placeholder - actual filtering depends on your data structure
+    if (!programIdString || programIdString.trim() === '') {
+      console.error("[Blockchain] Program ID is empty or invalid");
+      return [];
+    }
+    
+    console.log("[Blockchain] Using Program ID:", programIdString);
+    
+    // Validate program ID is a proper public key before creating PublicKey object
+    try {
+      // Setup connection (no need for wallet when just reading)
+      const connection = new web3.Connection(RPC_URL, { commitment: 'confirmed' });
+      const programId = new web3.PublicKey(programIdString);
+      
+      console.log("[Blockchain] Successfully created program ID public key");
+      
+      // Find all rides created by the program (using getProgramAccounts)
+      console.log("[Blockchain] Fetching program accounts...");
+      const accounts = await connection.getProgramAccounts(programId, {
+        filters: [
+          {
+            memcmp: {
+              offset: 8, // Skip the account discriminator
+              bytes: web3.PublicKey.default.toBase58(), // This is a placeholder - actual filtering depends on your data structure
+            },
           },
-        },
-      ],
-    });
-    
-    // Parse the account data
-    const provider = new AnchorProvider(connection, {} as any, {});
-    const program = new Program(IDL as any, programId, provider);
-    
-    const rides = accounts.map(account => {
-      try {
-        // Parse account data using the Ride account struct from IDL
-        const rideAccount = program.coder.accounts.decode('Ride', account.account.data);
-        
-        // Convert to our frontend Ride type
-        return {
-          id: rideAccount.id,
-          type: rideAccount.ride_type,
-          origin: rideAccount.origin,
-          destination: rideAccount.destination,
-          state: rideAccount.state,
-          university: rideAccount.university,
-          date: rideAccount.date,
-          time: rideAccount.time,
-          price: (rideAccount.price.toNumber() / web3.LAMPORTS_PER_SOL).toString(),
-          seats: rideAccount.seats.toString(),
-          driver: rideAccount.driver.toBase58(),
-          paymentStatus: rideAccount.payment_status,
-        };
-      } catch (error) {
-        console.error('Error decoding ride account:', error);
-        return null;
-      }
-    }).filter(ride => ride !== null);
-    
-    return rides;
+        ],
+      });
+      
+      console.log(`[Blockchain] Found ${accounts.length} program accounts`);
+      
+      // Parse the account data
+      const provider = new AnchorProvider(connection, {} as any, {});
+      const program = new Program(IDL as any, programId, provider);
+      
+      const rides = accounts.map(account => {
+        try {
+          // Parse account data using the Ride account struct from IDL
+          const rideAccount = program.coder.accounts.decode('Ride', account.account.data);
+          
+          // Convert to our frontend Ride type
+          return {
+            id: rideAccount.id,
+            type: rideAccount.ride_type,
+            origin: rideAccount.origin,
+            destination: rideAccount.destination,
+            state: rideAccount.state,
+            university: rideAccount.university,
+            date: rideAccount.date,
+            time: rideAccount.time,
+            price: (rideAccount.price.toNumber() / web3.LAMPORTS_PER_SOL).toString(),
+            seats: rideAccount.seats.toString(),
+            driver: rideAccount.driver.toBase58(),
+            paymentStatus: rideAccount.payment_status,
+          };
+        } catch (error) {
+          console.error('[Blockchain] Error decoding ride account:', error);
+          return null;
+        }
+      }).filter(ride => ride !== null);
+      
+      console.log(`[Blockchain] Successfully parsed ${rides.length} rides`);
+      return rides;
+    } catch (publicKeyError) {
+      console.error("[Blockchain] Invalid program ID format:", publicKeyError);
+      return [];
+    }
   } catch (error) {
-    console.error('Error fetching rides from blockchain:', error);
+    console.error('[Blockchain] Error fetching rides from blockchain:', error);
     return [];
   }
 }
@@ -190,6 +202,33 @@ export default function FindRidePage() {
   const [filteredRides, setFilteredRides] = useState<Ride[]>([]);
   const [searchPerformed, setSearchPerformed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Add state for exchange rate
+  const [exchangeRate, setExchangeRate] = useState<{
+    rmToSol: number;
+    lastUpdated: Date | null;
+    isLoading: boolean;
+    error: string | null;
+  }>({
+    rmToSol: 0.05, // Default fallback rate
+    lastUpdated: null,
+    isLoading: false,
+    error: null
+  });
+
+  // Check URL parameters for mode
+  useEffect(() => {
+    // Check if we're in a browser environment
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const modeParam = params.get('mode');
+      
+      if (modeParam === 'findOffers' || modeParam === 'findRequests') {
+        setCurrentSearchMode(modeParam);
+        console.log(`Setting search mode from URL parameter: ${modeParam}`);
+      }
+    }
+  }, []);
 
   // State for search form
   const [searchState, setSearchState] = useState("");
@@ -212,9 +251,54 @@ export default function FindRidePage() {
   const { publicKey, sendTransaction, wallet } = useWallet();
   const { connection } = useConnection();
 
+  // Add state for payment processing
   const [paymentLoadingRideId, setPaymentLoadingRideId] = useState<string | null>(null);
   const [paymentErrorRideId, setPaymentErrorRideId] = useState<string | null>(null);
   const [paymentErrorMessage, setPaymentErrorMessage] = useState<string | null>(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+  // Add state for transaction signature
+  const [txSignature, setTxSignature] = useState<string | null>(null);
+  const [txRideId, setTxRideId] = useState<string | null>(null);
+  const [txAmount, setTxAmount] = useState<{rm: number, sol: number} | null>(null);
+
+  // Function to fetch real-time exchange rates
+  const fetchExchangeRates = async () => {
+    try {
+      setExchangeRate(prev => ({ ...prev, isLoading: true, error: null }));
+      console.log("[Exchange] Fetching current exchange rates...");
+      
+      // Fetch SOL price in USD
+      const solResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+      const solData = await solResponse.json();
+      const solUsdPrice = solData.solana.usd;
+      
+      // Fetch MYR to USD rate
+      const fxResponse = await fetch('https://api.coingecko.com/api/v3/exchange_rates');
+      const fxData = await fxResponse.json();
+      const usdToMyr = fxData.rates.myr.value / fxData.rates.usd.value; // Convert from rate per USD to USD per MYR
+      
+      // Calculate RM to SOL rate
+      const rmToSolRate = 1 / (solUsdPrice * usdToMyr);
+      
+      console.log(`[Exchange] Current rates: 1 SOL = $${solUsdPrice} USD, 1 USD = ${usdToMyr} MYR`);
+      console.log(`[Exchange] Calculated conversion: 1 RM = ${rmToSolRate.toFixed(6)} SOL`);
+      
+      setExchangeRate({
+        rmToSol: rmToSolRate,
+        lastUpdated: new Date(),
+        isLoading: false,
+        error: null
+      });
+    } catch (error) {
+      console.error("[Exchange] Error fetching exchange rates:", error);
+      setExchangeRate(prev => ({
+        ...prev,
+        isLoading: false,
+        error: "Failed to fetch current exchange rates. Using default rates."
+      }));
+    }
+  };
 
   // Initialize WebSocket connection
   useEffect(() => {
@@ -225,6 +309,17 @@ export default function FindRidePage() {
     return () => {
       // No need to disconnect the socket here as it should persist across the app
     };
+  }, []);
+  
+  // Fetch exchange rates on mount and periodically
+  useEffect(() => {
+    // Initial fetch
+    fetchExchangeRates();
+    
+    // Set up interval to refresh rates every 15 minutes
+    const rateRefreshInterval = setInterval(fetchExchangeRates, 15 * 60 * 1000);
+    
+    return () => clearInterval(rateRefreshInterval);
   }, []);
   
   // Subscribe to ride updates
@@ -273,25 +368,15 @@ export default function FindRidePage() {
     async function loadRides() {
       setIsLoading(true);
       
-      try {
-        // Try to fetch from blockchain first
-        const blockchainRides = await fetchRidesFromBlockchain();
+      // Check if we need to force refresh from localStorage
+      const forceRefresh = localStorage.getItem('forceRideRefresh') === 'true';
+      if (forceRefresh) {
+        // Clear the flag
+        localStorage.removeItem('forceRideRefresh');
+        console.log("Forced ride refresh detected, loading directly from localStorage");
         
-        // If successful, use blockchain data
-        if (blockchainRides.length > 0) {
-          setRides(blockchainRides);
-          // Store in localStorage for offline access
-          localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(blockchainRides));
-          
-          // Filter rides by current search mode
-          if (!searchPerformed) {
-            const initialFilter = blockchainRides.filter(ride => 
-              currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
-            );
-            setFilteredRides(initialFilter);
-          }
-        } else {
-          // Fall back to localStorage if no blockchain data
+        // Load directly from localStorage
+        try {
           const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
           if (storedRides) {
             const parsedRides = JSON.parse(storedRides) as Ride[];
@@ -304,15 +389,80 @@ export default function FindRidePage() {
               );
               setFilteredRides(initialFilter);
             }
-          } else {
-            setRides([]);
-            setFilteredRides([]);
           }
+          setIsLoading(false);
+          return; // Skip the normal loading process
+        } catch (error) {
+          console.error("Error loading rides from localStorage during forced refresh:", error);
+        }
+      }
+      
+      try {
+        // Always load from localStorage first to ensure we have some data
+        let localRides: Ride[] = [];
+        try {
+          const storedRides = localStorage.getItem(RIDES_STORAGE_KEY);
+          if (storedRides) {
+            localRides = JSON.parse(storedRides) as Ride[];
+            
+            // Apply initial rides from localStorage
+            setRides(localRides);
+            
+            // Filter rides by current search mode
+            if (!searchPerformed) {
+              const initialFilter = localRides.filter(ride => 
+                currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
+              );
+              setFilteredRides(initialFilter);
+            }
+          }
+        } catch (localStorageError) {
+          console.error("Error loading rides from localStorage:", localStorageError);
+        }
+        
+        // Try to fetch from blockchain in the background
+        console.log("Attempting to fetch blockchain rides...");
+        const blockchainRides = await fetchRidesFromBlockchain();
+        
+        // If successful, use blockchain data
+        if (blockchainRides && blockchainRides.length > 0) {
+          console.log(`Loaded ${blockchainRides.length} rides from blockchain`);
+          
+          // Merge with local rides to keep locally added rides
+          // Use a Map to avoid duplicates, preferring blockchain data
+          const mergedRidesMap = new Map<string, Ride>();
+          
+          // Add local rides first
+          localRides.forEach(ride => {
+            mergedRidesMap.set(ride.id, ride);
+          });
+          
+          // Then add blockchain rides (will override any duplicates)
+          blockchainRides.forEach(ride => {
+            mergedRidesMap.set(ride.id, ride);
+          });
+          
+          // Convert back to array
+          const mergedRides = Array.from(mergedRidesMap.values());
+          
+          // Update state with merged rides
+          setRides(mergedRides);
+          
+          // Store merged rides in localStorage for offline access
+          localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(mergedRides));
+          
+          // Filter rides by current search mode
+          if (!searchPerformed) {
+            const initialFilter = mergedRides.filter(ride => 
+              currentSearchMode === 'findOffers' ? ride.type === 'offer' : ride.type === 'request'
+            );
+            setFilteredRides(initialFilter);
+          }
+        } else {
+          console.log("No rides found on blockchain or fetch failed. Using local storage data only.");
         }
       } catch (error) {
         console.error("Error loading rides:", error);
-        setRides([]);
-        setFilteredRides([]);
       } finally {
         setIsLoading(false);
       }
@@ -409,7 +559,12 @@ export default function FindRidePage() {
     }
   };
 
-  const handleSendChatMessage = () => {
+  const handleSendChatMessage = (event?: React.FormEvent) => {
+    // Prevent any form submission that might cause page navigation
+    if (event) {
+      event.preventDefault();
+    }
+    
     if (!activeChatRide || !chatInputMessage.trim()) return;
     
     const newMessage: Message = {
@@ -498,138 +653,199 @@ export default function FindRidePage() {
     }
   };
 
-  async function handleLockOrReleasePayment(ride: Ride) {
-    console.log("Attempting payment action for ride:", ride.id);
-    console.log("Using Program ID:", process.env.NEXT_PUBLIC_PROGRAM_ID);
-    console.log("Driver ID from ride data:", ride.driver);
-    console.log("Connected Wallet Public Key:", publicKey?.toBase58());
-
+  // Function to lock or release payment
+  const handleLockOrReleasePayment = async (ride: Ride, action: 'lock' | 'release') => {
     if (!publicKey || !wallet) {
-      console.error("Wallet not connected or wallet object missing.");
       setPaymentErrorRideId(ride.id);
-      setPaymentErrorMessage('Please connect your wallet first');
+      setPaymentErrorMessage("Wallet not connected. Please connect your wallet first.");
       return;
     }
 
-    // Validate driver public key before proceeding
     try {
-      console.log("Validating driver public key:", ride.driver);
-      new web3.PublicKey(ride.driver);
-      console.log("Driver public key is valid.");
-    } catch (e) {
-      console.error("Invalid driver public key:", ride.driver, e);
-      setPaymentErrorRideId(ride.id);
-      setPaymentErrorMessage(`Invalid driver address (${ride.driver ? ride.driver.substring(0, 6) : 'undefined'}...) provided for this ride. Cannot proceed.`);
-      return;
-    }
-
-    // Validate Program ID from environment variable
-    let programIdPublicKey: web3.PublicKey;
-    try {
-      const programIdString = process.env.NEXT_PUBLIC_PROGRAM_ID || '';
-      console.log("Validating Program ID:", programIdString);
-      programIdPublicKey = new web3.PublicKey(programIdString);
-      console.log("Program ID is valid.");
-    } catch (e) {
-      console.error("Invalid Program ID from environment variable:", process.env.NEXT_PUBLIC_PROGRAM_ID, e);
-      setPaymentErrorRideId(ride.id);
-      setPaymentErrorMessage(`Invalid Program ID configured. Please check environment variables.`);
-      return;
-    }
-
-    setPaymentLoadingRideId(ride.id);
-    setPaymentErrorRideId(null);
-    setPaymentErrorMessage(null);
-
-    try {
-      console.log("Setting up Anchor Provider...");
-      const provider = new AnchorProvider(
-        new web3.Connection(process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8899'),
-        wallet as any,
-        { commitment: 'confirmed' }
-      );
-      console.log("Setting up Program instance...");
-      const program = new Program(
-        IDL as any,
-        programIdPublicKey, // Use validated program ID
-        provider
-      );
-      console.log("Finding Ride PDA...");
-      const [ridePda] = web3.PublicKey.findProgramAddressSync(
-        [Buffer.from('ride'), Buffer.from(ride.id)],
-        program.programId
-      );
-      console.log("Ride PDA found:", ridePda.toBase58());
-
-      if (!ride.paymentStatus || ride.paymentStatus === 'pending') {
-        console.log("Attempting to lock payment (initializeRide)...");
-        // Lock payment
-        await program.methods
-          .initializeRide(
-            ride.id,
-            new BN(parseFloat(ride.price) * LAMPORTS_PER_SOL),
-            new web3.PublicKey(ride.driver), // Already validated
-            publicKey
-          )
-          .accounts({
-            ride: ridePda,
-            passenger: publicKey,
-            systemProgram: web3.SystemProgram.programId,
-          })
-          .rpc();
-        console.log("initializeRide successful!");
-        // Update state
-        const updatedRides = rides.map(r =>
-          r.id === ride.id ? { ...r, paymentStatus: 'locked' as const } : r
-        );
-        setRides(updatedRides);
-        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
-      } else if (ride.paymentStatus === 'locked') {
-        console.warn("Release payment logic is currently disabled.");
-         // Validate the current user is the driver before allowing release? 
-         // Note: Current contract requires driver to be the signer for release.
-         // The current frontend logic has the passenger signing.
-         // This needs clarification on who triggers release.
-
-        // Release payment
-        // TEMPORARILY COMMENTING OUT RELEASE LOGIC DUE TO SIGNER MISMATCH
-        /*
-        await program.methods
-          .releasePayment()
-          .accounts({
-            ride: ridePda,
-            driver: publicKey, // This is the passenger's key, contract expects driver
-            systemProgram: web3.SystemProgram.programId,
-          })
-          .rpc();
-        // Update state
-        const updatedRides = rides.map(r =>
-          r.id === ride.id ? { ...r, paymentStatus: 'released' as const } : r
-        );
-        setRides(updatedRides);
-        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
-        */
-       setPaymentErrorRideId(ride.id);
-       setPaymentErrorMessage("Release functionality currently disabled. Driver must release.");
+      setIsProcessingPayment(true);
+      setPaymentLoadingRideId(ride.id);
+      setPaymentErrorRideId(null);
+      setPaymentErrorMessage(null);
+      setTxSignature(null);
+      setTxRideId(null);
+      
+      console.log(`[Payment] Initiated ${action} for ride ${ride.id}`);
+      console.log(`[Payment] Ride details: Price ${ride.price} SOL, Driver: ${ride.driver}`);
+      
+      // Initialize driver's public key
+      let driverPubkey;
+      try {
+        driverPubkey = new PublicKey(ride.driver);
+        console.log(`[Payment] Driver public key parsed: ${driverPubkey.toString()}`);
+      } catch (err) {
+        console.error("[Payment] Invalid driver public key:", err);
+        setPaymentErrorRideId(ride.id);
+        setPaymentErrorMessage("Invalid driver wallet address. Cannot process payment.");
+        return;
       }
-    } catch (err: unknown) {
-      console.error("Payment transaction failed:", err);
-      setPaymentErrorRideId(ride.id);
-      let errorMessage = "An unexpected error occurred.";
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (typeof err === 'string') {
-        errorMessage = err;
+      
+      // Price calculation - handle decimal values correctly
+      const priceInRM = parseFloat(ride.price);
+      
+      // Convert from RM to SOL
+      const priceInSOL = priceInRM * exchangeRate.rmToSol;
+      const priceInLamports = Math.floor(priceInSOL * LAMPORTS_PER_SOL);
+      
+      console.log(`[Payment] Amount: ${priceInRM} RM = ${priceInSOL} SOL (${priceInLamports} lamports)`);
+      console.log(`[Payment] Using conversion rate: 1 RM = ${exchangeRate.rmToSol} SOL`);
+      
+      if (isNaN(priceInLamports) || priceInLamports <= 0) {
+        console.error("[Payment] Invalid price amount:", priceInRM, priceInSOL, priceInLamports);
+        setPaymentErrorRideId(ride.id);
+        setPaymentErrorMessage(`Invalid price amount: ${priceInRM} RM. Please contact support.`);
+        return;
+      }
+      
+      // Setup connection with proper configuration
+      const latestBlockHash = await connection.getLatestBlockhash('confirmed');
+      console.log("[Payment] Got latest blockhash");
+      
+      // Find PDAs for the ride account
+      const truncatedRideId = ride.id.substring(0, 32);
+      console.log(`[Payment] Truncated ride ID: ${truncatedRideId}`);
+      
+      let transaction;
+      
+      if (action === 'lock') {
+        console.log(`[Payment] Creating payment lock transaction for ${priceInLamports} lamports`);
+        
+        // Simple transfer transaction
+        transaction = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: publicKey,
+            toPubkey: driverPubkey,
+            lamports: priceInLamports,
+          })
+        );
       } else {
-        try {
-          errorMessage = JSON.stringify(err);
-        } catch { /* Ignore stringify error */ }
+        // For 'release' action - not applicable in this simplified version
+        console.log("[Payment] Release action not implemented in this version");
+        setPaymentErrorRideId(ride.id);
+        setPaymentErrorMessage("Release functionality is not implemented in this version.");
+        return;
       }
+      
+      // Set transaction parameters
+      transaction.recentBlockhash = latestBlockHash.blockhash;
+      transaction.feePayer = publicKey;
+      
+      // Send the transaction with improved error handling for user rejection
+      let signature;
+      try {
+        console.log("[Payment] Sending transaction...");
+        signature = await sendTransaction(transaction, connection);
+        console.log(`[Payment] Transaction sent with signature: ${signature}`);
+      } catch (walletError) {
+        // Handle user rejection of transaction without showing errors
+        const errorMessage = walletError instanceof Error ? walletError.message.toLowerCase() : '';
+        const errorName = walletError instanceof Error ? walletError.name : '';
+        
+        // Check for all possible rejection patterns
+        if ((errorName.includes('WalletSendTransaction') || 
+             errorName.includes('Wallet') || 
+             errorName === 'Error') && 
+            (errorMessage.includes('user rejected') || 
+             errorMessage.includes('user cancelled') || 
+             errorMessage.includes('cancelled by user') ||
+             errorMessage.includes('rejected') ||
+             errorMessage.includes('cancelled') ||
+             errorMessage.includes('denied') ||
+             errorMessage.includes('declined'))) {
+          
+          console.log("[Payment] Transaction was cancelled by user");
+          setIsProcessingPayment(false);
+          setPaymentLoadingRideId(null);
+          return; // Exit early without showing any errors
+        }
+        
+        // For other wallet errors, re-throw to be caught by the outer try-catch
+        throw walletError;
+      }
+      
+      // Wait for transaction confirmation
+      console.log("[Payment] Confirming transaction...");
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: signature,
+      }, 'confirmed');
+      
+      console.log("[Payment] Transaction confirmed successfully!");
+      
+      // Set the transaction signature for display
+      setTxSignature(signature);
+      setTxRideId(ride.id);
+      setTxAmount({
+        rm: priceInRM,
+        sol: priceInSOL
+      });
+      
+      if (action === 'lock') {
+        // Update ride in state with 'locked' payment status
+        const updatedRide: Ride = { ...ride, paymentStatus: 'locked' };
+        // Emit ride update via websocket
+        emitRideUpdate(updatedRide);
+        
+        // Update the list of rides with the updated ride
+        setRides(rides.map(r => (r.id === ride.id ? updatedRide : r)));
+        
+        // Update local storage
+        const updatedRides = rides.map(r => (r.id === ride.id ? updatedRide : r));
+        localStorage.setItem(RIDES_STORAGE_KEY, JSON.stringify(updatedRides));
+        
+        alert(`Payment of ${priceInRM} RM (${priceInSOL.toFixed(4)} SOL) sent successfully to ${ride.driver}!`);
+      }
+    } catch (error) {
+      console.error(`[Payment] Error ${action === 'lock' ? 'sending' : 'releasing'} payment:`, error);
+      
+      // Second chance to catch user rejections that might have slipped through
+      if (error instanceof Error) {
+        const errorMsg = error.message.toLowerCase();
+        const errorName = error.name;
+        
+        if ((errorName.includes('Wallet') || errorName === 'Error') &&
+            (errorMsg.includes('reject') || 
+             errorMsg.includes('cancel') || 
+             errorMsg.includes('denied') || 
+             errorMsg.includes('user'))) {
+          console.log("[Payment] Caught transaction cancellation in fallback handler");
+          return; // Exit without showing error
+        }
+      }
+      
+      // Handle other errors
+      let errorMessage = "An unknown error occurred. Please try again.";
+      
+      if (error instanceof Error) {
+        console.error("[Payment] Error name:", error.name);
+        console.error("[Payment] Error message:", error.message);
+        
+        if (error.message.includes("insufficient funds")) {
+          errorMessage = "Insufficient SOL in your wallet. Please add funds and try again.";
+        } else if (error.message.includes("expired")) {
+          errorMessage = "Transaction expired. Please try again with a better network connection.";
+        } else if (error.message.includes("blockhash")) {
+          errorMessage = "Network error: Could not get a valid blockhash. Please check your internet connection.";
+        } else if (error.message.includes("Invalid public key") || error.message.includes("not a valid public key")) {
+          errorMessage = "Invalid wallet address format. Please contact support.";
+        } else {
+          errorMessage = `${error.name}: ${error.message}`;
+        }
+      }
+      
+      setPaymentErrorRideId(ride.id);
       setPaymentErrorMessage(errorMessage);
+      alert(`Payment Failed: ${errorMessage}`);
     } finally {
+      setIsProcessingPayment(false);
       setPaymentLoadingRideId(null);
     }
-  }
+  };
 
   // Add function to navigate to profile with the ride ID
   const handleChatWithDriver = (ride: Ride) => {
@@ -795,13 +1011,18 @@ export default function FindRidePage() {
                     </p>
                     <div className="flex items-center space-x-2">
                         <button 
-                            onClick={() => handleChatWithDriver(ride)}
+                            onClick={() => handleOpenChat(ride)}
                             className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-teal-500 hover:bg-teal-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400 transition-colors duration-150 ease-in-out">
-                            {ride.type === 'offer' ? 'Chat with Driver' : 'Chat with Requester'}
+                            Chat Now
+                        </button>
+                        <button 
+                            onClick={() => handleChatWithDriver(ride)}
+                            className="py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 ease-in-out">
+                            View in Profile
                         </button>
                         {ride.type === 'offer' && publicKey && (
                             <button
-                              onClick={() => handleLockOrReleasePayment(ride)}
+                              onClick={() => handleLockOrReleasePayment(ride, 'lock')}
                               disabled={paymentLoadingRideId === ride.id || ride.paymentStatus === 'released'}
                               className={`py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white 
                                 ${ride.paymentStatus === 'locked' ? 'bg-green-600 hover:bg-green-700' : ride.paymentStatus === 'released' ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'}
@@ -822,6 +1043,27 @@ export default function FindRidePage() {
                   {paymentErrorRideId === ride.id && paymentErrorMessage && (
                     <div className="mt-2 text-xs text-red-600 dark:text-red-400 break-all">
                       Payment Error: {paymentErrorMessage}
+                    </div>
+                  )}
+                  {txRideId === ride.id && txSignature && (
+                    <div className="mt-2 text-xs text-green-600 dark:text-green-400">
+                      <p>Payment Successful!</p>
+                      {txAmount && (
+                        <p className="mb-1">
+                          {txAmount.rm.toFixed(2)} RM = {txAmount.sol.toFixed(6)} SOL
+                          <span className="text-gray-500 dark:text-gray-400 text-xs ml-1">
+                            (Rate: 1 RM = {exchangeRate.rmToSol.toFixed(6)} SOL)
+                          </span>
+                        </p>
+                      )}
+                      <a
+                        href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-green-700 dark:hover:text-green-300"
+                      >
+                        View on Solana Explorer
+                      </a>
                     </div>
                   )}
                 </div>
@@ -869,12 +1111,12 @@ export default function FindRidePage() {
                 <textarea 
                   value={chatInputMessage}
                   onChange={(e) => setChatInputMessage(e.target.value)}
-                  onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChatMessage(); } }}
+                  onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChatMessage(e); } }}
                   placeholder="Type your message..."
                   className="flex-grow p-2 border border-gray-300 dark:border-gray-600 rounded-l-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 h-12 resize-none"
                 />
                 <button 
-                  onClick={handleSendChatMessage}
+                  onClick={(e) => handleSendChatMessage(e)}
                   disabled={!chatInputMessage.trim()}
                   className="py-2 px-4 border border-transparent rounded-r-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600 h-12 flex items-center justify-center"
                 >
@@ -903,6 +1145,31 @@ export default function FindRidePage() {
                   />
                 </div>
               )}
+
+              {/* Exchange Rate Information */}
+              <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 text-center">
+                <p>
+                  Current Exchange Rate: 1 RM = {exchangeRate.rmToSol.toFixed(6)} SOL
+                  {exchangeRate.lastUpdated && (
+                    <span className="ml-1">
+                      (Updated: {exchangeRate.lastUpdated.toLocaleTimeString()})
+                    </span>
+                  )}
+                  <button 
+                    onClick={fetchExchangeRates}
+                    disabled={exchangeRate.isLoading}
+                    className="ml-2 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 underline"
+                  >
+                    {exchangeRate.isLoading ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </p>
+                {exchangeRate.isLoading && (
+                  <p className="italic">Updating exchange rates...</p>
+                )}
+                {exchangeRate.error && (
+                  <p className="text-orange-500 dark:text-orange-400">{exchangeRate.error}</p>
+                )}
+              </div>
             </div>
           </div>
         )}
