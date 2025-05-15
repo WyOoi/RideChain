@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 // import { Inter } from "next/font/google"; // Remove Inter
-import { GeistSans } from 'geist/font';
-import { GeistMono } from 'geist/font';
 import "./globals.css";
 import { WalletContextProvider } from "@/components/WalletProvider";
 import { ThemeProvider } from 'next-themes'; // Import ThemeProvider
@@ -20,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body suppressHydrationWarning className={`${GeistSans.className} ${GeistMono.variable}`}>
+      <body suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <WalletContextProvider>
             {children}

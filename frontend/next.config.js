@@ -14,7 +14,6 @@ const nextConfig = {
   },
   reactStrictMode: true,
   swcMinify: true,
-  transpilePackages: ['geist'],
   webpack: (config) => {
     // This is needed for packages that depend on Node.js modules
     config.resolve.fallback = {
