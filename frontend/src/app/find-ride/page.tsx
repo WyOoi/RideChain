@@ -839,13 +839,7 @@ export default function FindRidePage() {
                                     {paymentLoadingRideId === ride.id ? 'Processing...' : 'Release Payment'}
                                   </button>
                                 ) : (
-                                  <button
-                                    onClick={() => handleReleaseOrRefundPayment(ride, true)}
-                                    disabled={paymentLoadingRideId === ride.id}
-                                    className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150 ease-in-out"
-                                  >
-                                    {paymentLoadingRideId === ride.id ? 'Processing...' : 'Request Refund'}
-                                  </button>
+                                  null
                                 )}
                               </>
                             )}
